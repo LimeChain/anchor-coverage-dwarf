@@ -1,12 +1,14 @@
-use addr2line::Loader;
+use addr2line::{fallible_iterator::IntoFallibleIterator, Loader};
 use anyhow::{anyhow, Result};
 use byteorder::{LittleEndian, ReadBytesExt};
 use cargo_metadata::MetadataCommand;
+use solana_sbpf::ebpf;
 use std::{
     collections::BTreeMap,
     env::var_os,
     fs::{metadata, File, OpenOptions},
-    io::Write,
+    io::{Read, Write},
+    ops::{Shl, Shr},
     path::{Path, PathBuf},
 };
 
@@ -63,6 +65,8 @@ enum Outcome {
 }
 
 type Vaddrs = Vec<u64>;
+type Insns = Vec<u64>;
+type Regs = Vec<[u64; 12]>;
 
 type VaddrEntryMap<'a> = BTreeMap<u64, Entry<'a>>;
 
@@ -177,7 +181,7 @@ fn process_pcs_path(dwarfs: &[Dwarf], pcs_path: &Path) -> Result<Outcome> {
         pcs_path.strip_current_dir().display()
     );
 
-    let mut vaddrs = read_vaddrs(pcs_path)?;
+    let (mut vaddrs, insns, regs) = read_vaddrs(pcs_path)?;
 
     eprintln!("Program counters read: {}", vaddrs.len());
 
@@ -192,13 +196,102 @@ fn process_pcs_path(dwarfs: &[Dwarf], pcs_path: &Path) -> Result<Outcome> {
         dwarf.path.strip_current_dir().display()
     );
 
-    assert!(vaddrs
-        .first()
-        .is_some_and(|&vaddr| vaddr == dwarf.start_address));
+    // assert!(vaddrs
+    //     .first()
+    //     .is_some_and(|&vaddr| vaddr == dwarf.start_address));
 
     // smoelius: If a sequence of program counters refer to the same file and line, treat them as
     // one hit to that file and line.
-    vaddrs.dedup_by_key::<_, Option<&Entry>>(|vaddr| dwarf.vaddr_entry_map.get(vaddr));
+    // vaddrs.dedup_by_key::<_, Option<&Entry>>(|vaddr| dwarf.vaddr_entry_map.get(vaddr));
+
+    // eprintln!("find_symbol: {:?}", dwarf.loader.find_symbol(0x8d60));
+    // let range = dwarf.loader.find_location_range(0x8d58, 0x8d70);
+    // if let Ok(mut range_iter) = range {
+    //     while let Some((a, b, c)) = range_iter.next() {
+    //         eprintln!("{:08x?} {:08x?} {:?} {:?}", a, b, c.file, c.line);
+    //     }
+    // }
+
+    fn get_indent(indent: i32) -> String {
+        let mut s = String::new();
+        (0..indent).into_iter().for_each(|_| s.push_str("    "));
+        s
+    }
+
+    for (i, vaddr) in vaddrs.iter().enumerate() {
+        let mut indent = 0;
+        let frames = dwarf.loader.find_frames(*vaddr);
+        if let Ok(mut frames) = frames {
+            let mut found = false;
+            while let Some(frame) = frames.next().ok() {
+                if let Some(frame) = frame {
+                    // eprintln!("frame: {:08x?}", frame.dw_die_offset);
+                    if let Some(offset) = frame.dw_die_offset {
+                        // if offset.0 == 0x000307be {
+                        let Some(location) = frame.location else {
+                            continue;
+                        };
+                        let Some(func) = frame.function else { continue };
+                        eprintln!(
+                            "{}0x{:08x}({}) [{:016x}]=> frame 0x{:08x}#{}@{:?}:{:?}:{:?}\n  {:08x?}\n",
+                            get_indent(indent),
+                            *vaddr,
+                            vaddr >> 3,
+                            insns[i],
+                            offset.0,
+                            func.demangle().unwrap_or("".into()),
+                            location.file,
+                            location.line,
+                            location.column,
+                            regs[i],
+                        );
+
+                        if indent == 0 {
+                            // only for the first pc coz the inners are just stack frames
+                            let ins = insns[i].to_be_bytes();
+                            // eprintln!("{:02x?}", ins);
+
+                            let ins_type = ins[0];
+                            let _ins_dst = (ins[1] & 0xf) as usize;
+                            let _ins_src = ((ins[1] & 0xf0) >> 4) as usize;
+                            let ins_offset = ins[2] as u64 | ((ins[3] as u64) << 8);
+                            let _ins_immediate = u32::from_be_bytes(ins[4..].try_into().unwrap());
+                            if ins_type & ebpf::BPF_JMP == ebpf::BPF_JMP {
+                                let next_pc = vaddr + 8;
+                                let goto_pc = vaddr + ins_offset;
+                                let next_taken = vaddrs.iter().find(|e| **e == next_pc).is_some();
+                                let goto_taken = vaddrs.iter().find(|e| **e == goto_pc).is_some();
+                                if next_taken == false {
+                                    eprintln!("\t next branch {:x} + 8 not taken!", next_pc);
+                                }
+                                if goto_taken == false {
+                                    eprintln!(
+                                        "\t goto branch 0x{:x} + 0x{:x} not taken!",
+                                        vaddr, ins_offset
+                                    );
+                                }
+                            }
+                        }
+                        indent += 1;
+                        found = true;
+                        // } else {
+                        //     // break;
+                        // }
+                    }
+                } else {
+                    if found == false {
+                        eprintln!("Missed0: {:08x}", vaddr);
+                    }
+                    break;
+                }
+            }
+            if found == false {
+                eprintln!("Missed1: {:08x}", vaddr);
+            }
+        } else {
+            eprintln!("Missed2: {:08x}", vaddr);
+        }
+    }
 
     // smoelius: A `vaddr` could not have an entry because its file does not exist. Keep only those
     // `vaddr`s that have entries.
@@ -275,15 +368,55 @@ fn dump_vaddr_entry_map(vaddr_entry_map: BTreeMap<u64, Entry<'_>>) {
     }
 }
 
-fn read_vaddrs(pcs_path: &Path) -> Result<Vaddrs> {
+fn read_vaddrs(pcs_path: &Path) -> Result<(Vaddrs, Insns, Regs)> {
+    let mut regs = Regs::new();
+    let mut insns = Insns::new();
     let mut vaddrs = Vaddrs::new();
     let mut pcs_file = File::open(pcs_path)?;
-    while let Ok(pc) = pcs_file.read_u64::<LittleEndian>() {
-        let vaddr = pc << 3;
+
+    let mut data_trace = [0u64; 13];
+    'outer: loop {
+        for i in 0..data_trace.len() {
+            match pcs_file.read_u64::<LittleEndian>() {
+                Err(_) => break 'outer,
+                Ok(reg) => data_trace[i] = reg,
+            }
+        }
+
+        // NB: the pc is instruction indexed, not byte indexed, keeps it aligned to 8 bytes - hence << 3 -> *8
+        let vaddr = (data_trace[11] << 3) + 0x120; // TODO: Mind the .text offset in the dwarf - fix the hardcoded value.
+
+        let mut data_file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open("/tmp/pcs.txt")
+            .expect("cannot open file");
+        data_file.write_all(format!("0x{:08x?} all: {:08x?}\n", vaddr, data_trace).as_bytes())?;
+
         vaddrs.push(vaddr);
+        insns.push(data_trace[12].to_be()); // we've stored the insn in data_trace[12] i.e the 13th element - 0..11 are the vm regs
+        let regs_values: [u64; 12] = data_trace[0..12].try_into().unwrap();
+        regs.push(regs_values);
     }
-    Ok(vaddrs)
+
+    Ok((vaddrs, insns, regs))
 }
+
+// fn read_vaddrs(pcs_path: &Path) -> Result<Vaddrs> {
+//     let mut vaddrs = Vaddrs::new();
+//     let mut pcs_file = File::open(pcs_path)?;
+//     while let Ok(pc) = pcs_file.read_u64::<LittleEndian>() {
+//         let vaddr = pc << 3;
+//         let mut data_file = OpenOptions::new()
+//             .create(true)
+//             .append(true)
+//             .open("/tmp/pcs.txt")
+//             .expect("cannot open file");
+//         data_file.write_all(format!("0x{:08x?}\n", vaddr).as_bytes())?;
+//         vaddrs.push(vaddr);
+//     }
+//     Ok(vaddrs)
+// }
 
 fn find_applicable_dwarf<'a>(
     dwarfs: &'a [Dwarf],
@@ -304,7 +437,7 @@ fn find_applicable_dwarf<'a>(
 
         // smoelius: Make the shift "permanent".
         for vaddr in vaddrs.iter_mut() {
-            *vaddr += shift;
+            // *vaddr += shift;
         }
 
         return Ok((dwarf, None));
