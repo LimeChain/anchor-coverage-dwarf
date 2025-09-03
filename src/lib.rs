@@ -1,4 +1,4 @@
-use addr2line::{fallible_iterator::IntoFallibleIterator, Loader};
+use addr2line::{fallible_iterator::FallibleIterator, Loader};
 use anyhow::{anyhow, Result};
 use byteorder::{LittleEndian, ReadBytesExt};
 use cargo_metadata::MetadataCommand;
@@ -7,8 +7,7 @@ use std::{
     collections::BTreeMap,
     env::var_os,
     fs::{metadata, File, OpenOptions},
-    io::{Read, Write},
-    ops::{Shl, Shr},
+    io::Write,
     path::{Path, PathBuf},
 };
 
@@ -182,7 +181,13 @@ fn process_pcs_path(dwarfs: &[Dwarf], pcs_path: &Path) -> Result<Outcome> {
     );
 
     let (mut vaddrs, insns, regs) = read_vaddrs(pcs_path)?;
-
+    for va in vaddrs.iter() {
+        eprintln!(
+            "\t\t\t {:x} from {}",
+            *va,
+            pcs_path.to_string_lossy().to_string()
+        );
+    }
     eprintln!("Program counters read: {}", vaddrs.len());
 
     let (dwarf, mismatch) = find_applicable_dwarf(dwarfs, pcs_path, &mut vaddrs)?;
@@ -221,8 +226,9 @@ fn process_pcs_path(dwarfs: &[Dwarf], pcs_path: &Path) -> Result<Outcome> {
     for (i, vaddr) in vaddrs.iter().enumerate() {
         let mut indent = 0;
         let frames = dwarf.loader.find_frames(*vaddr);
-        if let Ok(mut frames) = frames {
+        if let Ok(frames) = frames {
             let mut found = false;
+            let mut frames = frames.peekable();
             while let Some(frame) = frames.next().ok() {
                 if let Some(frame) = frame {
                     // eprintln!("frame: {:08x?}", frame.dw_die_offset);
@@ -258,17 +264,57 @@ fn process_pcs_path(dwarfs: &[Dwarf], pcs_path: &Path) -> Result<Outcome> {
                             let _ins_immediate = u32::from_be_bytes(ins[4..].try_into().unwrap());
                             if ins_type & ebpf::BPF_JMP == ebpf::BPF_JMP {
                                 let next_pc = vaddr + 8;
-                                let goto_pc = vaddr + ins_offset;
+                                let goto_pc = vaddr + 8 + ins_offset * 8;
                                 let next_taken = vaddrs.iter().find(|e| **e == next_pc).is_some();
                                 let goto_taken = vaddrs.iter().find(|e| **e == goto_pc).is_some();
+                                if next_taken == false && goto_taken == false {
+                                    eprintln!(
+                                        "pcs_file: {}",
+                                        pcs_path.to_string_lossy().to_string()
+                                    );
+                                }
                                 if next_taken == false {
-                                    eprintln!("\t next branch {:x} + 8 not taken!", next_pc);
+                                    if let Ok(Some(frame)) = frames.peek() {
+                                        if let Some(location) = &frame.location {
+                                            let caller_file = location.file;
+                                            let caller_line = location.line;
+
+                                            match (caller_file, caller_line) {
+                                                (Some(file), Some(line)) => {
+                                                    eprintln!("\t next branch {:x} not taken! Caller: {}:{}", next_pc, file, line);
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                    } else {
+                                        eprintln!(
+                                            "\t next branch {:x} not taken! Not nested",
+                                            next_pc
+                                        );
+                                    }
                                 }
                                 if goto_taken == false {
-                                    eprintln!(
-                                        "\t goto branch 0x{:x} + 0x{:x} not taken!",
-                                        vaddr, ins_offset
+                                    if let Ok(Some(frame)) = frames.peek() {
+                                        if let Some(location) = &frame.location {
+                                            let caller_file = location.file;
+                                            let caller_line = location.line;
+
+                                            match (caller_file, caller_line) {
+                                                (Some(file), Some(line)) => {
+                                                    eprintln!(
+                                        "\t goto branch 0x{:x}(0x{:x} + 0x{:x}) not taken!, Caller: {}:{}",
+                                        goto_pc, vaddr, ins_offset, file, line
                                     );
+                                                }
+                                                _ => {}
+                                            }
+                                        }
+                                    } else {
+                                        eprintln!(
+                                        "\t goto branch 0x{:x}(0x{:x} + 0x{:x}) not taken! Not nested!",
+                                        goto_pc, vaddr, ins_offset
+                                    );
+                                    }
                                 }
                             }
                         }
