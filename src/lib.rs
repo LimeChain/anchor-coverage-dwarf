@@ -134,7 +134,7 @@ Closest match files written: {closest_match_paths:#?}
 
 If you are done generating lcov files, try running:
 
-    genhtml --output-directory coverage {}/*.lcov && open coverage/index.html
+    genhtml --output-directory coverage {}/*.lcov --rc branch_coverage=1 && open coverage/index.html
 ",
         lcov_paths.len(),
         pcs_paths.len(),
@@ -294,7 +294,7 @@ end_of_record
                                                     let mut lcov_file = OpenOptions::new()
                                                         .create(true)
                                                         .append(true)
-                                                        .open("/tmp/1.lcov")
+                                                        .open(format!("sbf_trace_dir/1.lcov"))
                                                         .expect("cannot open file");
                                                     if file.contains("vault") {
                                                         let _ =
@@ -335,7 +335,7 @@ end_of_record
                                                     let mut lcov_file = OpenOptions::new()
                                                         .create(true)
                                                         .append(true)
-                                                        .open("/tmp/1.lcov")
+                                                        .open(format!("sbf_trace_dir/1.lcov"))
                                                         .expect("cannot open file");
                                                     if file.contains("vault") {
                                                         let _ =
