@@ -267,7 +267,7 @@ fn process_pcs_path(dwarfs: &[Dwarf], pcs_path: &Path) -> Result<Outcome> {
                                 let goto_pc = vaddr + 8 + ins_offset * 8;
                                 let next_taken = vaddrs.iter().find(|e| **e == next_pc).is_some();
                                 let goto_taken = vaddrs.iter().find(|e| **e == goto_pc).is_some();
-                                if next_taken == false && goto_taken == false {
+                                if next_taken == false || goto_taken == false {
                                     eprintln!(
                                         "pcs_file: {}",
                                         pcs_path.to_string_lossy().to_string()
@@ -281,14 +281,14 @@ fn process_pcs_path(dwarfs: &[Dwarf], pcs_path: &Path) -> Result<Outcome> {
 
                                             match (caller_file, caller_line) {
                                                 (Some(file), Some(line)) => {
-                                                    eprintln!("\t next branch {:x} not taken! Caller: {}:{}", next_pc, file, line);
+                                                    eprintln!("\t next branch @0x{:x} not taken! Caller: {}:{}", next_pc, file, line);
                                                 }
                                                 _ => {}
                                             }
                                         }
                                     } else {
                                         eprintln!(
-                                            "\t next branch {:x} not taken! Not nested",
+                                            "\t next branch @0x{:x} not taken! Not nested",
                                             next_pc
                                         );
                                     }
@@ -302,8 +302,8 @@ fn process_pcs_path(dwarfs: &[Dwarf], pcs_path: &Path) -> Result<Outcome> {
                                             match (caller_file, caller_line) {
                                                 (Some(file), Some(line)) => {
                                                     eprintln!(
-                                        "\t goto branch 0x{:x}(0x{:x} + 0x{:x}) not taken!, Caller: {}:{}",
-                                        goto_pc, vaddr, ins_offset, file, line
+                                        "\t goto branch @0x{:x} not taken!, Caller: {}:{}",
+                                        goto_pc, file, line
                                     );
                                                 }
                                                 _ => {}
@@ -311,9 +311,9 @@ fn process_pcs_path(dwarfs: &[Dwarf], pcs_path: &Path) -> Result<Outcome> {
                                         }
                                     } else {
                                         eprintln!(
-                                        "\t goto branch 0x{:x}(0x{:x} + 0x{:x}) not taken! Not nested!",
-                                        goto_pc, vaddr, ins_offset
-                                    );
+                                            "\t goto branch @0x{:x} not taken! Not nested!",
+                                            goto_pc
+                                        );
                                     }
                                 }
                             }
