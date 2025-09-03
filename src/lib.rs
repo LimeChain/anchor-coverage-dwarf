@@ -282,6 +282,24 @@ fn process_pcs_path(dwarfs: &[Dwarf], pcs_path: &Path) -> Result<Outcome> {
                                             match (caller_file, caller_line) {
                                                 (Some(file), Some(line)) => {
                                                     eprintln!("\t next branch @0x{:x} not taken! Caller: {}:{}", next_pc, file, line);
+                                                    let content = format!(
+                                                        "
+SF:{file}
+DA:{line},1
+BRDA:{line},0,0,0
+BRDA:{line},0,1,1
+end_of_record
+"
+                                                    );
+                                                    let mut lcov_file = OpenOptions::new()
+                                                        .create(true)
+                                                        .append(true)
+                                                        .open("/tmp/1.lcov")
+                                                        .expect("cannot open file");
+                                                    if file.contains("vault") {
+                                                        let _ =
+                                                            lcov_file.write_all(content.as_bytes());
+                                                    }
                                                 }
                                                 _ => {}
                                             }
@@ -305,6 +323,24 @@ fn process_pcs_path(dwarfs: &[Dwarf], pcs_path: &Path) -> Result<Outcome> {
                                         "\t goto branch @0x{:x} not taken!, Caller: {}:{}",
                                         goto_pc, file, line
                                     );
+                                                    let content = format!(
+                                                        "
+SF:{file}
+DA:{line},1
+BRDA:{line},0,0,1
+BRDA:{line},0,1,0
+end_of_record
+"
+                                                    );
+                                                    let mut lcov_file = OpenOptions::new()
+                                                        .create(true)
+                                                        .append(true)
+                                                        .open("/tmp/1.lcov")
+                                                        .expect("cannot open file");
+                                                    if file.contains("vault") {
+                                                        let _ =
+                                                            lcov_file.write_all(content.as_bytes());
+                                                    }
                                                 }
                                                 _ => {}
                                             }
