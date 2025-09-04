@@ -324,23 +324,21 @@ end_of_record
             let mut frames = frames.peekable();
             while let Some(Some(frame)) = frames.next().ok() {
                 indent += 1;
-                let frame_details = get_frame_details(&frame);
+                let outer_frame_details = get_frame_details(&frame);
                 eprintln!(
                             "{}⛳ 0x{:08x}({}) [{:016x}]=> frame 0x{:08x?}#{:?}@{:?}:{:?}:{:?}\n{}VM regs: {:08x?}\n",
                             get_indent(indent-1),
                             *vaddr,
                             vaddr >> 3,
                             insns[i],
-                            frame_details.dw_die_offset,
-                            frame_details.demangled_function_name,
-                            frame_details.file_name,
-                            frame_details.line_num,
-                            frame_details.column,
+                            outer_frame_details.dw_die_offset,
+                            outer_frame_details.demangled_function_name,
+                            outer_frame_details.file_name,
+                            outer_frame_details.line_num,
+                            outer_frame_details.column,
                             get_indent(indent),
                             regs[i],
                         );
-
-                let outer_fn_name = frame_details.demangled_function_name;
 
                 let ins = insns[i].to_be_bytes();
                 // eprintln!("{:02x?}", ins);
@@ -363,9 +361,9 @@ end_of_record
                             pcs_path.to_string_lossy().to_string()
                         );
                         if let Ok(Some(frame)) = frames.peek() {
-                            let frame_details = get_frame_details(&frame);
+                            let inner_frame_details = get_frame_details(&frame);
 
-                            match (frame_details.file_name, frame_details.line_num) {
+                            match (inner_frame_details.file_name, inner_frame_details.line_num) {
                                 (Some(file), Some(line)) => {
                                     if next_taken == false {
                                         let goto_is_taken =
@@ -379,14 +377,14 @@ end_of_record
                                         eprintln!(
                                             "{}outer fn: {:?}, inner fn: {:?}",
                                             get_indent(indent),
-                                            outer_fn_name,
-                                            frame_details.demangled_function_name
+                                            outer_frame_details.demangled_function_name,
+                                            inner_frame_details.demangled_function_name
                                         );
                                         eprintln!(
                                             "{}next @0x{:x} not taken! Caller: {:?}@{}:{}",
                                             get_indent(indent),
                                             next_pc,
-                                            frame_details.demangled_function_name,
+                                            inner_frame_details.demangled_function_name,
                                             file,
                                             line
                                         );
@@ -394,7 +392,7 @@ end_of_record
                                         if let Some(goto_is_taken) = goto_is_taken {
                                             // detect a compiler flip
                                             if goto_is_taken.demangled_function_name
-                                                == frame_details.demangled_function_name
+                                                == inner_frame_details.demangled_function_name
                                             {
                                                 eprintln!(
                                                     "{}eBPF Compiler flip detected",
@@ -418,7 +416,7 @@ end_of_record
                                             "{}goto branch @0x{:x} not taken!, Caller: {:?}@{}:{}",
                                             get_indent(indent),
                                             goto_pc,
-                                            frame_details.demangled_function_name,
+                                            inner_frame_details.demangled_function_name,
                                             file,
                                             line
                                         );
@@ -426,7 +424,7 @@ end_of_record
                                         if let Some(next_is_taken) = next_is_taken {
                                             // detect a compiler flip
                                             if next_is_taken.demangled_function_name
-                                                == frame_details.demangled_function_name
+                                                == inner_frame_details.demangled_function_name
                                             {
                                                 branch_not_taken = Branch::GotoNotTaken;
                                                 eprintln!(
@@ -447,12 +445,50 @@ end_of_record
                                     get_indent(indent),
                                     next_pc
                                 );
+                                let goto_is_taken = get_frame_details_by_vaddr(&dwarf, goto_pc);
+                                let mut branch_not_taken = Branch::NextNotTaken;
+                                if let Some(goto_is_taken) = goto_is_taken {
+                                    // detect a compiler flip
+                                    if goto_is_taken.demangled_function_name
+                                        == outer_frame_details.demangled_function_name
+                                    {
+                                        eprintln!(
+                                            "{}eBPF Compiler flip detected",
+                                            get_indent(indent)
+                                        );
+                                        branch_not_taken = Branch::GotoNotTaken;
+                                    }
+                                }
+                                if let (Some(file), Some(line)) =
+                                    (outer_frame_details.file_name, outer_frame_details.line_num)
+                                {
+                                    write_branch_lcov(file, line, branch_not_taken);
+                                }
                             } else if goto_taken == false {
                                 eprintln!(
                                     "{}goto branch @0x{:x} not taken! Not nested!",
                                     get_indent(indent),
                                     goto_pc
                                 );
+                                let next_is_taken = get_frame_details_by_vaddr(&dwarf, next_pc);
+                                let mut branch_not_taken = Branch::GotoNotTaken;
+                                if let Some(next_is_taken) = next_is_taken {
+                                    // detect a compiler flip
+                                    if next_is_taken.demangled_function_name
+                                        == outer_frame_details.demangled_function_name
+                                    {
+                                        branch_not_taken = Branch::NextNotTaken;
+                                        eprintln!(
+                                            "{}eBPF Compiler flip detected",
+                                            get_indent(indent)
+                                        );
+                                    }
+                                }
+                                if let (Some(file), Some(line)) =
+                                    (outer_frame_details.file_name, outer_frame_details.line_num)
+                                {
+                                    write_branch_lcov(file, line, branch_not_taken);
+                                }
                             }
                         }
                     }
