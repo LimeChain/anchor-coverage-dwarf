@@ -223,7 +223,7 @@ fn process_pcs_path(dwarfs: &[Dwarf], pcs_path: &Path) -> Result<Outcome> {
 
     fn get_indent(indent: i32) -> String {
         let mut s = String::new();
-        (0..indent).into_iter().for_each(|_| s.push_str("    "));
+        (0..indent).into_iter().for_each(|_| s.push_str("\t"));
         s
     }
 
@@ -322,15 +322,12 @@ end_of_record
         let frames = dwarf.loader.find_frames(*vaddr);
         if let Ok(frames) = frames {
             let mut frames = frames.peekable();
-            while let Some(frame) = frames.next().ok() {
-                if frame.is_none() {
-                    break;
-                }
-                if let Some(frame) = frame {
-                    let frame_details = get_frame_details(&frame);
-                    eprintln!(
-                            "{}0x{:08x}({}) [{:016x}]=> frame 0x{:08x?}#{:?}@{:?}:{:?}:{:?}\n  {:08x?}\n",
-                            get_indent(indent),
+            while let Some(Some(frame)) = frames.next().ok() {
+                indent += 1;
+                let frame_details = get_frame_details(&frame);
+                eprintln!(
+                            "{}⛳ 0x{:08x}({}) [{:016x}]=> frame 0x{:08x?}#{:?}@{:?}:{:?}:{:?}\n{}VM regs: {:08x?}\n",
+                            get_indent(indent-1),
                             *vaddr,
                             vaddr >> 3,
                             insns[i],
@@ -339,116 +336,128 @@ end_of_record
                             frame_details.file_name,
                             frame_details.line_num,
                             frame_details.column,
+                            get_indent(indent),
                             regs[i],
                         );
 
-                    let outer_fn_name = frame_details.demangled_function_name;
-                    if indent == 0 {
-                        // only for the first pc coz the inners are just stack frames
-                        let ins = insns[i].to_be_bytes();
-                        // eprintln!("{:02x?}", ins);
+                let outer_fn_name = frame_details.demangled_function_name;
 
-                        let ins_type = ins[0];
-                        let _ins_dst = (ins[1] & 0xf) as usize;
-                        let _ins_src = ((ins[1] & 0xf0) >> 4) as usize;
-                        let ins_offset = ins[2] as u64 | ((ins[3] as u64) << 8);
-                        let _ins_immediate = u32::from_be_bytes(ins[4..].try_into().unwrap());
-                        if ins_type & ebpf::BPF_JMP == ebpf::BPF_JMP {
-                            let next_pc = vaddr + 8;
-                            let goto_pc = vaddr + 8 + ins_offset * 8;
-                            let next_taken = vaddrs.iter().find(|e| **e == next_pc).is_some();
-                            let goto_taken = vaddrs.iter().find(|e| **e == goto_pc).is_some();
+                let ins = insns[i].to_be_bytes();
+                // eprintln!("{:02x?}", ins);
 
-                            if next_taken == false || goto_taken == false {
-                                eprintln!(
-                                    "\t pcs_file: {}",
-                                    pcs_path.to_string_lossy().to_string()
-                                );
-                                if let Ok(Some(frame)) = frames.peek() {
-                                    let frame_details = get_frame_details(&frame);
+                let ins_type = ins[0];
+                let _ins_dst = (ins[1] & 0xf) as usize;
+                let _ins_src = ((ins[1] & 0xf0) >> 4) as usize;
+                let ins_offset = ins[2] as u64 | ((ins[3] as u64) << 8);
+                let _ins_immediate = u32::from_be_bytes(ins[4..].try_into().unwrap());
+                if ins_type & ebpf::BPF_JMP == ebpf::BPF_JMP {
+                    let next_pc = vaddr + 8;
+                    let goto_pc = vaddr + 8 + ins_offset * 8;
+                    let next_taken = vaddrs.iter().find(|e| **e == next_pc).is_some();
+                    let goto_taken = vaddrs.iter().find(|e| **e == goto_pc).is_some();
 
-                                    match (frame_details.file_name, frame_details.line_num) {
-                                        (Some(file), Some(line)) => {
-                                            if next_taken == false {
-                                                let goto_is_taken =
-                                                    get_frame_details_by_vaddr(&dwarf, goto_pc);
+                    if next_taken == false || goto_taken == false {
+                        eprintln!(
+                            "{}pcs_file: {}",
+                            get_indent(indent),
+                            pcs_path.to_string_lossy().to_string()
+                        );
+                        if let Ok(Some(frame)) = frames.peek() {
+                            let frame_details = get_frame_details(&frame);
+
+                            match (frame_details.file_name, frame_details.line_num) {
+                                (Some(file), Some(line)) => {
+                                    if next_taken == false {
+                                        let goto_is_taken =
+                                            get_frame_details_by_vaddr(&dwarf, goto_pc);
+                                        eprintln!(
+                                            "{}goto_is_taken frame: {:x?}",
+                                            get_indent(indent),
+                                            goto_is_taken
+                                        );
+
+                                        eprintln!(
+                                            "{}outer fn: {:?}, inner fn: {:?}",
+                                            get_indent(indent),
+                                            outer_fn_name,
+                                            frame_details.demangled_function_name
+                                        );
+                                        eprintln!(
+                                            "{}next @0x{:x} not taken! Caller: {:?}@{}:{}",
+                                            get_indent(indent),
+                                            next_pc,
+                                            frame_details.demangled_function_name,
+                                            file,
+                                            line
+                                        );
+                                        let mut branch_not_taken = Branch::NextNotTaken;
+                                        if let Some(goto_is_taken) = goto_is_taken {
+                                            // detect a compiler flip
+                                            if goto_is_taken.demangled_function_name
+                                                == frame_details.demangled_function_name
+                                            {
                                                 eprintln!(
-                                                    "\t goto_is_taken frame: {:x?}",
-                                                    goto_is_taken
+                                                    "{}eBPF Compiler flip detected",
+                                                    get_indent(indent)
                                                 );
-
-                                                eprintln!(
-                                                    "\t outer fn: {:?}, inner fn: {:?}",
-                                                    outer_fn_name,
-                                                    frame_details.demangled_function_name
-                                                );
-                                                eprintln!(
-                                                    "\t next @0x{:x} not taken! Caller: {:?}@{}:{}",
-                                                    next_pc,
-                                                    frame_details.demangled_function_name,
-                                                    file,
-                                                    line
-                                                );
-                                                let mut branch_not_taken = Branch::NextNotTaken;
-                                                if let Some(goto_is_taken) = goto_is_taken {
-                                                    // detect a compiler flip
-                                                    if goto_is_taken.demangled_function_name
-                                                        == frame_details.demangled_function_name
-                                                    {
-                                                        eprintln!("\t Compiler flip detected");
-                                                        branch_not_taken = Branch::GotoNotTaken;
-                                                    }
-                                                }
-
-                                                write_branch_lcov(file, line, branch_not_taken);
-                                            } else if goto_taken == false {
-                                                let next_is_taken =
-                                                    get_frame_details_by_vaddr(&dwarf, next_pc);
-                                                eprintln!(
-                                                    "\t next_is_taken frame: {:x?}",
-                                                    next_is_taken
-                                                );
-
-                                                eprintln!(
-                                        "\t goto branch @0x{:x} not taken!, Caller: {:?}@{}:{}",
-                                        goto_pc, frame_details.demangled_function_name, file, line
-                                    );
-                                                let mut branch_not_taken = Branch::GotoNotTaken;
-                                                if let Some(next_is_taken) = next_is_taken {
-                                                    // detect a compiler flip
-                                                    if next_is_taken.demangled_function_name
-                                                        == frame_details.demangled_function_name
-                                                    {
-                                                        branch_not_taken = Branch::GotoNotTaken;
-                                                        eprintln!("\t Compiler flip detected");
-                                                    }
-                                                }
-                                                write_branch_lcov(file, line, branch_not_taken);
+                                                branch_not_taken = Branch::GotoNotTaken;
                                             }
                                         }
-                                        _ => {}
-                                    }
-                                } else {
-                                    if next_taken == false {
-                                        eprintln!(
-                                            "\t next branch @0x{:x} not taken! Not nested",
-                                            next_pc
-                                        );
+
+                                        write_branch_lcov(file, line, branch_not_taken);
                                     } else if goto_taken == false {
+                                        let next_is_taken =
+                                            get_frame_details_by_vaddr(&dwarf, next_pc);
                                         eprintln!(
-                                            "\t goto branch @0x{:x} not taken! Not nested!",
-                                            goto_pc
+                                            "{}next_is_taken frame: {:x?}",
+                                            get_indent(indent),
+                                            next_is_taken
                                         );
+
+                                        eprintln!(
+                                            "{}goto branch @0x{:x} not taken!, Caller: {:?}@{}:{}",
+                                            get_indent(indent),
+                                            goto_pc,
+                                            frame_details.demangled_function_name,
+                                            file,
+                                            line
+                                        );
+                                        let mut branch_not_taken = Branch::GotoNotTaken;
+                                        if let Some(next_is_taken) = next_is_taken {
+                                            // detect a compiler flip
+                                            if next_is_taken.demangled_function_name
+                                                == frame_details.demangled_function_name
+                                            {
+                                                branch_not_taken = Branch::GotoNotTaken;
+                                                eprintln!(
+                                                    "{}eBPF Compiler flip detected",
+                                                    get_indent(indent)
+                                                );
+                                            }
+                                        }
+                                        write_branch_lcov(file, line, branch_not_taken);
                                     }
                                 }
+                                _ => {}
+                            }
+                        } else {
+                            if next_taken == false {
+                                eprintln!(
+                                    "{}next branch @0x{:x} not taken! Not nested",
+                                    get_indent(indent),
+                                    next_pc
+                                );
+                            } else if goto_taken == false {
+                                eprintln!(
+                                    "{}goto branch @0x{:x} not taken! Not nested!",
+                                    get_indent(indent),
+                                    goto_pc
+                                );
                             }
                         }
                     }
-                    indent += 1;
-                    // } else {
-                    //     // break;
-                    // }
                 }
+                break; // only interested in the first frame deep, inners are just stack frames and we don't have the regs snapshots
             }
         }
     }
