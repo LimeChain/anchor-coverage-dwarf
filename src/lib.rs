@@ -1,4 +1,8 @@
-use addr2line::{fallible_iterator::FallibleIterator, Loader};
+use addr2line::{
+    fallible_iterator::FallibleIterator,
+    gimli::{self, ReaderOffset},
+    Frame, Loader,
+};
 use anyhow::{anyhow, Result};
 use byteorder::{LittleEndian, ReadBytesExt};
 use cargo_metadata::MetadataCommand;
@@ -223,6 +227,88 @@ fn process_pcs_path(dwarfs: &[Dwarf], pcs_path: &Path) -> Result<Outcome> {
         s
     }
 
+    #[allow(dead_code)]
+    pub struct FrameDetails<'a> {
+        dw_die_offset: Option<u64>,
+        demangled_function_name: Option<String>,
+        file_name: Option<&'a str>,
+        line_num: Option<u32>,
+        column: Option<u32>,
+    }
+
+    fn get_frame_details<'a, R: gimli::Reader>(frame: &Frame<'a, R>) -> FrameDetails<'a> {
+        let dw_die_offset = frame
+            .dw_die_offset
+            .map(|inner| Some(inner.0.into_u64()))
+            .unwrap_or(None);
+        let demangled_function_name = frame.function.as_ref().map(|inner| {
+            inner
+                .demangle()
+                .unwrap_or("cant_demangle".into())
+                .to_string()
+        });
+        let file_name = frame
+            .location
+            .as_ref()
+            .map(|inner| inner.file)
+            .unwrap_or(None);
+        let line_num = frame
+            .location
+            .as_ref()
+            .map(|inner| inner.line)
+            .unwrap_or(None);
+        let column = frame
+            .location
+            .as_ref()
+            .map(|inner| inner.column)
+            .unwrap_or(None);
+        FrameDetails {
+            dw_die_offset,
+            demangled_function_name,
+            file_name,
+            line_num,
+            column,
+        }
+    }
+
+    #[derive(PartialEq)]
+    pub enum Branch {
+        NextNotTaken,
+        GotoNotTaken,
+    }
+
+    fn write_branch_lcov(file: &str, line: u32, taken: Branch) {
+        let content = if taken == Branch::NextNotTaken {
+            format!(
+                "
+SF:{file}
+DA:{line},1
+BRDA:{line},0,0,0
+BRDA:{line},0,1,1
+end_of_record
+"
+            )
+        } else {
+            format!(
+                "
+SF:{file}
+DA:{line},1
+BRDA:{line},0,0,1
+BRDA:{line},0,1,0
+end_of_record
+"
+            )
+        };
+        let mut lcov_file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(format!("sbf_trace_dir/1.lcov"))
+            .expect("cannot open file");
+        if file.contains("vault") {
+            let _ = lcov_file.write_all(content.as_bytes());
+        }
+    }
+
     for (i, vaddr) in vaddrs.iter().enumerate() {
         let mut indent = 0;
         let frames = dwarf.loader.find_frames(*vaddr);
@@ -252,6 +338,7 @@ fn process_pcs_path(dwarfs: &[Dwarf], pcs_path: &Path) -> Result<Outcome> {
                             regs[i],
                         );
 
+                        let outer_fn_name = func.demangle().unwrap_or("".into()).to_string();
                         if indent == 0 {
                             // only for the first pc coz the inners are just stack frames
                             let ins = insns[i].to_be_bytes();
@@ -267,89 +354,61 @@ fn process_pcs_path(dwarfs: &[Dwarf], pcs_path: &Path) -> Result<Outcome> {
                                 let goto_pc = vaddr + 8 + ins_offset * 8;
                                 let next_taken = vaddrs.iter().find(|e| **e == next_pc).is_some();
                                 let goto_taken = vaddrs.iter().find(|e| **e == goto_pc).is_some();
+
                                 if next_taken == false || goto_taken == false {
                                     eprintln!(
-                                        "pcs_file: {}",
+                                        "\t pcs_file: {}",
                                         pcs_path.to_string_lossy().to_string()
                                     );
-                                }
-                                if next_taken == false {
                                     if let Ok(Some(frame)) = frames.peek() {
-                                        if let Some(location) = &frame.location {
-                                            let caller_file = location.file;
-                                            let caller_line = location.line;
+                                        let frame_details = get_frame_details(&frame);
 
-                                            match (caller_file, caller_line) {
-                                                (Some(file), Some(line)) => {
-                                                    eprintln!("\t next branch @0x{:x} not taken! Caller: {}:{}", next_pc, file, line);
-                                                    let content = format!(
-                                                        "
-SF:{file}
-DA:{line},1
-BRDA:{line},0,0,0
-BRDA:{line},0,1,1
-end_of_record
-"
-                                                    );
-                                                    let mut lcov_file = OpenOptions::new()
-                                                        .create(true)
-                                                        .append(true)
-                                                        .open(format!("sbf_trace_dir/1.lcov"))
-                                                        .expect("cannot open file");
-                                                    if file.contains("vault") {
-                                                        let _ =
-                                                            lcov_file.write_all(content.as_bytes());
-                                                    }
-                                                }
-                                                _ => {}
-                                            }
-                                        }
-                                    } else {
-                                        eprintln!(
-                                            "\t next branch @0x{:x} not taken! Not nested",
-                                            next_pc
-                                        );
-                                    }
-                                }
-                                if goto_taken == false {
-                                    if let Ok(Some(frame)) = frames.peek() {
-                                        if let Some(location) = &frame.location {
-                                            let caller_file = location.file;
-                                            let caller_line = location.line;
-
-                                            match (caller_file, caller_line) {
-                                                (Some(file), Some(line)) => {
+                                        match (frame_details.file_name, frame_details.line_num) {
+                                            (Some(file), Some(line)) => {
+                                                if next_taken == false {
                                                     eprintln!(
-                                        "\t goto branch @0x{:x} not taken!, Caller: {}:{}",
-                                        goto_pc, file, line
-                                    );
-                                                    let content = format!(
-                                                        "
-SF:{file}
-DA:{line},1
-BRDA:{line},0,0,1
-BRDA:{line},0,1,0
-end_of_record
-"
+                                                        "\t outer fn: {}, inner fn: {:?}",
+                                                        outer_fn_name,
+                                                        frame_details.demangled_function_name
                                                     );
-                                                    let mut lcov_file = OpenOptions::new()
-                                                        .create(true)
-                                                        .append(true)
-                                                        .open(format!("sbf_trace_dir/1.lcov"))
-                                                        .expect("cannot open file");
-                                                    if file.contains("vault") {
-                                                        let _ =
-                                                            lcov_file.write_all(content.as_bytes());
-                                                    }
+                                                    eprintln!(
+                                                    "\t next @0x{:x} not taken! Caller: {:?}@{}:{}",
+                                                    next_pc,
+                                                    frame_details.demangled_function_name,
+                                                    file,
+                                                    line
+                                                );
+                                                    write_branch_lcov(
+                                                        file,
+                                                        line,
+                                                        Branch::NextNotTaken,
+                                                    );
+                                                } else if goto_taken == false {
+                                                    eprintln!(
+                                        "\t goto branch @0x{:x} not taken!, Caller: {:?}@{}:{}",
+                                        goto_pc, frame_details.demangled_function_name, file, line
+                                    );
+                                                    write_branch_lcov(
+                                                        file,
+                                                        line,
+                                                        Branch::GotoNotTaken,
+                                                    );
                                                 }
-                                                _ => {}
                                             }
+                                            _ => {}
                                         }
                                     } else {
-                                        eprintln!(
-                                            "\t goto branch @0x{:x} not taken! Not nested!",
-                                            goto_pc
-                                        );
+                                        if next_taken == false {
+                                            eprintln!(
+                                                "\t next branch @0x{:x} not taken! Not nested",
+                                                next_pc
+                                            );
+                                        } else if goto_taken == false {
+                                            eprintln!(
+                                                "\t goto branch @0x{:x} not taken! Not nested!",
+                                                goto_pc
+                                            );
+                                        }
                                     }
                                 }
                             }
