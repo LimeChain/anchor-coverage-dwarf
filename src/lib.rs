@@ -228,6 +228,7 @@ fn process_pcs_path(dwarfs: &[Dwarf], pcs_path: &Path) -> Result<Outcome> {
     }
 
     #[allow(dead_code)]
+    #[derive(Debug)]
     pub struct FrameDetails<'a> {
         dw_die_offset: Option<u64>,
         demangled_function_name: Option<String>,
@@ -309,13 +310,22 @@ end_of_record
         }
     }
 
+    fn get_frame_details_by_vaddr<'a>(dwarf: &Dwarf, vaddr: u64) -> Option<FrameDetails<'a>> {
+        let mut frame = dwarf.loader.find_frames(vaddr).ok()?;
+        let frame = frame.next().ok()??;
+        let frame_details = get_frame_details(&frame);
+        Some(frame_details)
+    }
+
     for (i, vaddr) in vaddrs.iter().enumerate() {
         let mut indent = 0;
         let frames = dwarf.loader.find_frames(*vaddr);
         if let Ok(frames) = frames {
-            let mut found = false;
             let mut frames = frames.peekable();
             while let Some(frame) = frames.next().ok() {
+                if frame.is_none() {
+                    break;
+                }
                 if let Some(frame) = frame {
                     let frame_details = get_frame_details(&frame);
                     eprintln!(
@@ -360,6 +370,13 @@ end_of_record
                                     match (frame_details.file_name, frame_details.line_num) {
                                         (Some(file), Some(line)) => {
                                             if next_taken == false {
+                                                let goto_is_taken =
+                                                    get_frame_details_by_vaddr(&dwarf, goto_pc);
+                                                eprintln!(
+                                                    "\t goto_is_taken frame: {:x?}",
+                                                    goto_is_taken
+                                                );
+
                                                 eprintln!(
                                                     "\t outer fn: {:?}, inner fn: {:?}",
                                                     outer_fn_name,
@@ -372,13 +389,41 @@ end_of_record
                                                     file,
                                                     line
                                                 );
-                                                write_branch_lcov(file, line, Branch::NextNotTaken);
+                                                let mut branch_not_taken = Branch::NextNotTaken;
+                                                if let Some(goto_is_taken) = goto_is_taken {
+                                                    // detect a compiler flip
+                                                    if goto_is_taken.demangled_function_name
+                                                        == frame_details.demangled_function_name
+                                                    {
+                                                        eprintln!("\t Compiler flip detected");
+                                                        branch_not_taken = Branch::GotoNotTaken;
+                                                    }
+                                                }
+
+                                                write_branch_lcov(file, line, branch_not_taken);
                                             } else if goto_taken == false {
+                                                let next_is_taken =
+                                                    get_frame_details_by_vaddr(&dwarf, next_pc);
+                                                eprintln!(
+                                                    "\t next_is_taken frame: {:x?}",
+                                                    next_is_taken
+                                                );
+
                                                 eprintln!(
                                         "\t goto branch @0x{:x} not taken!, Caller: {:?}@{}:{}",
                                         goto_pc, frame_details.demangled_function_name, file, line
                                     );
-                                                write_branch_lcov(file, line, Branch::GotoNotTaken);
+                                                let mut branch_not_taken = Branch::GotoNotTaken;
+                                                if let Some(next_is_taken) = next_is_taken {
+                                                    // detect a compiler flip
+                                                    if next_is_taken.demangled_function_name
+                                                        == frame_details.demangled_function_name
+                                                    {
+                                                        branch_not_taken = Branch::GotoNotTaken;
+                                                        eprintln!("\t Compiler flip detected");
+                                                    }
+                                                }
+                                                write_branch_lcov(file, line, branch_not_taken);
                                             }
                                         }
                                         _ => {}
@@ -400,19 +445,10 @@ end_of_record
                         }
                     }
                     indent += 1;
-                    found = true;
                     // } else {
                     //     // break;
                     // }
-                } else {
-                    if found == false {
-                        eprintln!("Missed0: {:08x}", vaddr);
-                    }
-                    break;
                 }
-            }
-            if found == false {
-                eprintln!("Missed1: {:08x}", vaddr);
             }
         }
     }
