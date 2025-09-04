@@ -317,108 +317,93 @@ end_of_record
             let mut frames = frames.peekable();
             while let Some(frame) = frames.next().ok() {
                 if let Some(frame) = frame {
-                    // eprintln!("frame: {:08x?}", frame.dw_die_offset);
-                    if let Some(offset) = frame.dw_die_offset {
-                        // if offset.0 == 0x000307be {
-                        let Some(location) = frame.location else {
-                            continue;
-                        };
-                        let Some(func) = frame.function else { continue };
-                        eprintln!(
-                            "{}0x{:08x}({}) [{:016x}]=> frame 0x{:08x}#{}@{:?}:{:?}:{:?}\n  {:08x?}\n",
+                    let frame_details = get_frame_details(&frame);
+                    eprintln!(
+                            "{}0x{:08x}({}) [{:016x}]=> frame 0x{:08x?}#{:?}@{:?}:{:?}:{:?}\n  {:08x?}\n",
                             get_indent(indent),
                             *vaddr,
                             vaddr >> 3,
                             insns[i],
-                            offset.0,
-                            func.demangle().unwrap_or("".into()),
-                            location.file,
-                            location.line,
-                            location.column,
+                            frame_details.dw_die_offset,
+                            frame_details.demangled_function_name,
+                            frame_details.file_name,
+                            frame_details.line_num,
+                            frame_details.column,
                             regs[i],
                         );
 
-                        let outer_fn_name = func.demangle().unwrap_or("".into()).to_string();
-                        if indent == 0 {
-                            // only for the first pc coz the inners are just stack frames
-                            let ins = insns[i].to_be_bytes();
-                            // eprintln!("{:02x?}", ins);
+                    let outer_fn_name = frame_details.demangled_function_name;
+                    if indent == 0 {
+                        // only for the first pc coz the inners are just stack frames
+                        let ins = insns[i].to_be_bytes();
+                        // eprintln!("{:02x?}", ins);
 
-                            let ins_type = ins[0];
-                            let _ins_dst = (ins[1] & 0xf) as usize;
-                            let _ins_src = ((ins[1] & 0xf0) >> 4) as usize;
-                            let ins_offset = ins[2] as u64 | ((ins[3] as u64) << 8);
-                            let _ins_immediate = u32::from_be_bytes(ins[4..].try_into().unwrap());
-                            if ins_type & ebpf::BPF_JMP == ebpf::BPF_JMP {
-                                let next_pc = vaddr + 8;
-                                let goto_pc = vaddr + 8 + ins_offset * 8;
-                                let next_taken = vaddrs.iter().find(|e| **e == next_pc).is_some();
-                                let goto_taken = vaddrs.iter().find(|e| **e == goto_pc).is_some();
+                        let ins_type = ins[0];
+                        let _ins_dst = (ins[1] & 0xf) as usize;
+                        let _ins_src = ((ins[1] & 0xf0) >> 4) as usize;
+                        let ins_offset = ins[2] as u64 | ((ins[3] as u64) << 8);
+                        let _ins_immediate = u32::from_be_bytes(ins[4..].try_into().unwrap());
+                        if ins_type & ebpf::BPF_JMP == ebpf::BPF_JMP {
+                            let next_pc = vaddr + 8;
+                            let goto_pc = vaddr + 8 + ins_offset * 8;
+                            let next_taken = vaddrs.iter().find(|e| **e == next_pc).is_some();
+                            let goto_taken = vaddrs.iter().find(|e| **e == goto_pc).is_some();
 
-                                if next_taken == false || goto_taken == false {
-                                    eprintln!(
-                                        "\t pcs_file: {}",
-                                        pcs_path.to_string_lossy().to_string()
-                                    );
-                                    if let Ok(Some(frame)) = frames.peek() {
-                                        let frame_details = get_frame_details(&frame);
+                            if next_taken == false || goto_taken == false {
+                                eprintln!(
+                                    "\t pcs_file: {}",
+                                    pcs_path.to_string_lossy().to_string()
+                                );
+                                if let Ok(Some(frame)) = frames.peek() {
+                                    let frame_details = get_frame_details(&frame);
 
-                                        match (frame_details.file_name, frame_details.line_num) {
-                                            (Some(file), Some(line)) => {
-                                                if next_taken == false {
-                                                    eprintln!(
-                                                        "\t outer fn: {}, inner fn: {:?}",
-                                                        outer_fn_name,
-                                                        frame_details.demangled_function_name
-                                                    );
-                                                    eprintln!(
+                                    match (frame_details.file_name, frame_details.line_num) {
+                                        (Some(file), Some(line)) => {
+                                            if next_taken == false {
+                                                eprintln!(
+                                                    "\t outer fn: {:?}, inner fn: {:?}",
+                                                    outer_fn_name,
+                                                    frame_details.demangled_function_name
+                                                );
+                                                eprintln!(
                                                     "\t next @0x{:x} not taken! Caller: {:?}@{}:{}",
                                                     next_pc,
                                                     frame_details.demangled_function_name,
                                                     file,
                                                     line
                                                 );
-                                                    write_branch_lcov(
-                                                        file,
-                                                        line,
-                                                        Branch::NextNotTaken,
-                                                    );
-                                                } else if goto_taken == false {
-                                                    eprintln!(
+                                                write_branch_lcov(file, line, Branch::NextNotTaken);
+                                            } else if goto_taken == false {
+                                                eprintln!(
                                         "\t goto branch @0x{:x} not taken!, Caller: {:?}@{}:{}",
                                         goto_pc, frame_details.demangled_function_name, file, line
                                     );
-                                                    write_branch_lcov(
-                                                        file,
-                                                        line,
-                                                        Branch::GotoNotTaken,
-                                                    );
-                                                }
+                                                write_branch_lcov(file, line, Branch::GotoNotTaken);
                                             }
-                                            _ => {}
                                         }
-                                    } else {
-                                        if next_taken == false {
-                                            eprintln!(
-                                                "\t next branch @0x{:x} not taken! Not nested",
-                                                next_pc
-                                            );
-                                        } else if goto_taken == false {
-                                            eprintln!(
-                                                "\t goto branch @0x{:x} not taken! Not nested!",
-                                                goto_pc
-                                            );
-                                        }
+                                        _ => {}
+                                    }
+                                } else {
+                                    if next_taken == false {
+                                        eprintln!(
+                                            "\t next branch @0x{:x} not taken! Not nested",
+                                            next_pc
+                                        );
+                                    } else if goto_taken == false {
+                                        eprintln!(
+                                            "\t goto branch @0x{:x} not taken! Not nested!",
+                                            goto_pc
+                                        );
                                     }
                                 }
                             }
                         }
-                        indent += 1;
-                        found = true;
-                        // } else {
-                        //     // break;
-                        // }
                     }
+                    indent += 1;
+                    found = true;
+                    // } else {
+                    //     // break;
+                    // }
                 } else {
                     if found == false {
                         eprintln!("Missed0: {:08x}", vaddr);
@@ -429,8 +414,6 @@ end_of_record
             if found == false {
                 eprintln!("Missed1: {:08x}", vaddr);
             }
-        } else {
-            eprintln!("Missed2: {:08x}", vaddr);
         }
     }
 
