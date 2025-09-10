@@ -296,8 +296,20 @@ fn _build_rust_cwd(
     arch: &ProgramArch,
     cargo_args: Vec<String>,
 ) -> Result<()> {
+    let sbpf_version_arg = std::env::var("SBPF_VERSION")
+        .ok()
+        .map(|sbpf_ver| vec!["--arch".into(), sbpf_ver])
+        .unwrap_or(vec![]);
+    let platform_tools_version = std::env::var("TOOLS_VERSION")
+        .ok()
+        .map(|tools_ver| vec!["--tools-version".into(), tools_ver])
+        .unwrap_or(vec![]);
+
     let exit = std::process::Command::new("cargo")
         .arg(arch.build_subcommand())
+        // procdump: allow specifying sbpf version and the platform-tools version.
+        .args(sbpf_version_arg.iter())
+        .args(platform_tools_version.iter())
         // smoelius: The next call to `arg` does not appear in the original.
         .arg("--debug")
         .args(cargo_args.clone())
