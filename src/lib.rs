@@ -373,7 +373,7 @@ end_of_record
                     eprintln!("very next instruction is: {:x}", next_pc);
                     let dst = ins_dst;
                     let src = ins_src;
-                    let goto_pc = vaddr + 8 + ins_offset * 8;
+                    let goto_pc = vaddr + 8 + ins_offset;
 
                     // get next_pc from the next batch of registers corresponding to the next vaddr.
                     eprintln!("current regs: {:x?}", regs[i]);
@@ -386,7 +386,10 @@ end_of_record
                         continue;
                     };
                     next_pc += 0x120;
-                    eprintln!("goto_pc calced from vaddr: {:x}", goto_pc);
+                    eprintln!(
+                        "goto_pc calced from vaddr: {:x}, ins_offset: {}",
+                        goto_pc, ins_offset
+                    );
                     eprintln!("from next regs -> next_pc is: {:x}", next_pc);
 
                     match ins_type {
