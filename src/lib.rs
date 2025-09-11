@@ -272,14 +272,32 @@ fn process_pcs_path(dwarfs: &[Dwarf], pcs_path: &Path) -> Result<Outcome> {
         }
     }
 
-    #[derive(PartialEq)]
-    pub enum Branch {
-        NextNotTaken,
-        GotoNotTaken,
+    #[derive(PartialEq, Clone, Default)]
+    pub struct Branch {
+        file: Option<String>,
+        line: Option<u32>,
+        next_taken: u32,
+        goto_taken: u32,
     }
 
-    fn write_branch_lcov(file: &str, line: u32, taken: Branch) {
-        let content = if taken == Branch::NextNotTaken {
+    impl Branch {
+        pub fn new(file: Option<&str>, line: Option<u32>) -> Self {
+            Self {
+                file: file.map(|inner| inner.to_string()),
+                line,
+                ..Default::default()
+            }
+        }
+    }
+
+    #[derive(PartialEq, Clone)]
+    pub enum LcovBranch {
+        NextNotTaken,
+        GotoNotTaken,
+    };
+
+    fn write_branch_lcov(file: &str, line: u32, taken: LcovBranch) {
+        let content = if taken == LcovBranch::NextNotTaken {
             format!(
                 "
 SF:{file}
@@ -317,6 +335,7 @@ end_of_record
         Some(frame_details)
     }
 
+    let mut branches = BTreeMap::new();
     for (i, vaddr) in vaddrs.iter().enumerate() {
         let mut indent = 0;
         let frames = dwarf.loader.find_frames(*vaddr);
@@ -343,158 +362,226 @@ end_of_record
                 let ins = insns[i].to_be_bytes();
                 // eprintln!("{:02x?}", ins);
 
+                let registers = regs[i];
                 let ins_type = ins[0];
-                let _ins_dst = (ins[1] & 0xf) as usize;
-                let _ins_src = ((ins[1] & 0xf0) >> 4) as usize;
-                let ins_offset = ins[2] as u64 | ((ins[3] as u64) << 8);
-                let _ins_immediate = u32::from_be_bytes(ins[4..].try_into().unwrap());
-                if ins_type & ebpf::BPF_JMP == ebpf::BPF_JMP {
-                    let next_pc = vaddr + 8;
+                let ins_dst = (ins[1] & 0xf) as usize;
+                let ins_src = ((ins[1] & 0xf0) >> 4) as usize;
+                let ins_offset = (ins[2] as u64 | ((ins[3] as u64) << 8)) * 8;
+                let ins_immediate = i32::from_be_bytes(ins[4..].try_into().unwrap()) as i64;
+                if (ins_type & ebpf::BPF_JMP) == ebpf::BPF_JMP {
+                    let mut next_pc = vaddr + 8;
+                    eprintln!("very next instruction is: {:x}", next_pc);
+                    let dst = ins_dst;
+                    let src = ins_src;
                     let goto_pc = vaddr + 8 + ins_offset * 8;
-                    let next_taken = vaddrs.iter().find(|e| **e == next_pc).is_some();
-                    let goto_taken = vaddrs.iter().find(|e| **e == goto_pc).is_some();
 
-                    if next_taken == false || goto_taken == false {
-                        eprintln!(
-                            "{}pcs_file: {}",
-                            get_indent(indent),
-                            pcs_path.to_string_lossy().to_string()
-                        );
-                        if let Ok(Some(frame)) = frames.peek() {
-                            let inner_frame_details = get_frame_details(&frame);
-
-                            match (inner_frame_details.file_name, inner_frame_details.line_num) {
-                                (Some(file), Some(line)) => {
-                                    if next_taken == false {
-                                        let goto_is_taken =
-                                            get_frame_details_by_vaddr(&dwarf, goto_pc);
-                                        eprintln!(
-                                            "{}goto_is_taken frame: {:x?}",
-                                            get_indent(indent),
-                                            goto_is_taken
-                                        );
-
-                                        eprintln!(
-                                            "{}outer fn: {:?}, inner fn: {:?}",
-                                            get_indent(indent),
-                                            outer_frame_details.demangled_function_name,
-                                            inner_frame_details.demangled_function_name
-                                        );
-                                        eprintln!(
-                                            "{}next @0x{:x} not taken! Caller: {:?}@{}:{}",
-                                            get_indent(indent),
-                                            next_pc,
-                                            inner_frame_details.demangled_function_name,
-                                            file,
-                                            line
-                                        );
-                                        let mut branch_not_taken = Branch::NextNotTaken;
-                                        if let Some(goto_is_taken) = goto_is_taken {
-                                            // detect a compiler flip
-                                            if goto_is_taken.demangled_function_name
-                                                == inner_frame_details.demangled_function_name
-                                            {
-                                                eprintln!(
-                                                    "{}eBPF Compiler flip detected",
-                                                    get_indent(indent)
-                                                );
-                                                branch_not_taken = Branch::GotoNotTaken;
-                                            }
-                                        }
-
-                                        write_branch_lcov(file, line, branch_not_taken);
-                                    } else if goto_taken == false {
-                                        let next_is_taken =
-                                            get_frame_details_by_vaddr(&dwarf, next_pc);
-                                        eprintln!(
-                                            "{}next_is_taken frame: {:x?}",
-                                            get_indent(indent),
-                                            next_is_taken
-                                        );
-
-                                        eprintln!(
-                                            "{}goto branch @0x{:x} not taken!, Caller: {:?}@{}:{}",
-                                            get_indent(indent),
-                                            goto_pc,
-                                            inner_frame_details.demangled_function_name,
-                                            file,
-                                            line
-                                        );
-                                        let mut branch_not_taken = Branch::GotoNotTaken;
-                                        if let Some(next_is_taken) = next_is_taken {
-                                            // detect a compiler flip
-                                            if next_is_taken.demangled_function_name
-                                                == inner_frame_details.demangled_function_name
-                                            {
-                                                branch_not_taken = Branch::GotoNotTaken;
-                                                eprintln!(
-                                                    "{}eBPF Compiler flip detected",
-                                                    get_indent(indent)
-                                                );
-                                            }
-                                        }
-                                        write_branch_lcov(file, line, branch_not_taken);
-                                    }
-                                }
-                                _ => {}
-                            }
-                        } else {
-                            if next_taken == false {
-                                eprintln!(
-                                    "{}next branch @0x{:x} not taken! Not nested",
-                                    get_indent(indent),
-                                    next_pc
-                                );
-                                let goto_is_taken = get_frame_details_by_vaddr(&dwarf, goto_pc);
-                                let mut branch_not_taken = Branch::NextNotTaken;
-                                if let Some(goto_is_taken) = goto_is_taken {
-                                    // detect a compiler flip
-                                    if goto_is_taken.demangled_function_name
-                                        == outer_frame_details.demangled_function_name
-                                    {
-                                        eprintln!(
-                                            "{}eBPF Compiler flip detected",
-                                            get_indent(indent)
-                                        );
-                                        branch_not_taken = Branch::GotoNotTaken;
-                                    }
-                                }
-                                if let (Some(file), Some(line)) =
-                                    (outer_frame_details.file_name, outer_frame_details.line_num)
-                                {
-                                    write_branch_lcov(file, line, branch_not_taken);
-                                }
-                            } else if goto_taken == false {
-                                eprintln!(
-                                    "{}goto branch @0x{:x} not taken! Not nested!",
-                                    get_indent(indent),
-                                    goto_pc
-                                );
-                                let next_is_taken = get_frame_details_by_vaddr(&dwarf, next_pc);
-                                let mut branch_not_taken = Branch::GotoNotTaken;
-                                if let Some(next_is_taken) = next_is_taken {
-                                    // detect a compiler flip
-                                    if next_is_taken.demangled_function_name
-                                        == outer_frame_details.demangled_function_name
-                                    {
-                                        branch_not_taken = Branch::NextNotTaken;
-                                        eprintln!(
-                                            "{}eBPF Compiler flip detected",
-                                            get_indent(indent)
-                                        );
-                                    }
-                                }
-                                if let (Some(file), Some(line)) =
-                                    (outer_frame_details.file_name, outer_frame_details.line_num)
-                                {
-                                    write_branch_lcov(file, line, branch_not_taken);
-                                }
-                            }
-                        }
+                    // get next_pc from the next batch of registers corresponding to the next vaddr.
+                    eprintln!("current regs: {:x?}", regs[i]);
+                    if regs.get(i + 1).is_some() {
+                        eprintln!("next regs: {:x?}", regs[i + 1]);
                     }
+                    let Some(Some(mut next_pc)) =
+                        regs.get(i + 1).map(|regs| regs[11].checked_shl(3))
+                    else {
+                        continue;
+                    };
+                    next_pc += 0x120;
+                    eprintln!("goto_pc calced from vaddr: {:x}", goto_pc);
+                    eprintln!("from next regs -> next_pc is: {:x}", next_pc);
+
+                    match ins_type {
+                        // ebpf::JA
+                        ebpf::JEQ_IMM
+                        | ebpf::JEQ_REG
+                        | ebpf::JGT_IMM
+                        | ebpf::JGT_REG
+                        | ebpf::JGE_IMM
+                        | ebpf::JGE_REG
+                        | ebpf::JLT_IMM
+                        | ebpf::JLT_REG
+                        | ebpf::JLE_IMM
+                        | ebpf::JLE_REG
+                        | ebpf::JSET_IMM
+                        | ebpf::JSET_REG
+                        | ebpf::JNE_IMM
+                        | ebpf::JNE_REG
+                        | ebpf::JSGT_IMM
+                        | ebpf::JSGT_REG
+                        | ebpf::JSGE_IMM
+                        | ebpf::JSGE_REG
+                        | ebpf::JSLT_IMM
+                        | ebpf::JSLT_REG
+                        | ebpf::JSLE_IMM
+                        | ebpf::JSLE_REG
+                        // | ebpf::CALL_REG
+                        // | ebpf::CALL_IMM
+                        // | ebpf::SYSCALL
+                        // | ebpf::RETURN /*| ebpf::EXIT */
+                        => {},
+                        _ => {
+                            continue;
+                        }
+                    };
+
+                    // match ins_type {
+                    //     ebpf::JA => {
+                    //         next_pc = (next_pc as i64 + ins_offset as i64) as u64;
+                    //     }
+                    //     ebpf::JEQ_IMM => {
+                    //         if registers[dst] == ins_immediate as u64 {
+                    //             next_pc = (next_pc as i64 + ins_offset as i64) as u64;
+                    //         }
+                    //     }
+                    //     ebpf::JEQ_REG => {
+                    //         if registers[dst] == registers[src] {
+                    //             next_pc = (next_pc as i64 + ins_offset as i64) as u64;
+                    //         }
+                    //     }
+                    //     ebpf::JGT_IMM => {
+                    //         if registers[dst] > ins_immediate as u64 {
+                    //             next_pc = (next_pc as i64 + ins_offset as i64) as u64;
+                    //         }
+                    //     }
+                    //     ebpf::JGT_REG => {
+                    //         if registers[dst] > registers[src] {
+                    //             next_pc = (next_pc as i64 + ins_offset as i64) as u64;
+                    //         }
+                    //     }
+                    //     ebpf::JGE_IMM => {
+                    //         if registers[dst] >= ins_immediate as u64 {
+                    //             next_pc = (next_pc as i64 + ins_offset as i64) as u64;
+                    //         }
+                    //     }
+                    //     ebpf::JGE_REG => {
+                    //         if registers[dst] >= registers[src] {
+                    //             next_pc = (next_pc as i64 + ins_offset as i64) as u64;
+                    //         }
+                    //     }
+                    //     ebpf::JLT_IMM => {
+                    //         if registers[dst] < ins_immediate as u64 {
+                    //             next_pc = (next_pc as i64 + ins_offset as i64) as u64;
+                    //         }
+                    //     }
+                    //     ebpf::JLT_REG => {
+                    //         if registers[dst] < registers[src] {
+                    //             next_pc = (next_pc as i64 + ins_offset as i64) as u64;
+                    //         }
+                    //     }
+                    //     ebpf::JLE_IMM => {
+                    //         if registers[dst] <= ins_immediate as u64 {
+                    //             next_pc = (next_pc as i64 + ins_offset as i64) as u64;
+                    //         }
+                    //     }
+                    //     ebpf::JLE_REG => {
+                    //         if registers[dst] <= registers[src] {
+                    //             next_pc = (next_pc as i64 + ins_offset as i64) as u64;
+                    //         }
+                    //     }
+                    //     ebpf::JSET_IMM => {
+                    //         if registers[dst] & ins_immediate as u64 != 0 {
+                    //             next_pc = (next_pc as i64 + ins_offset as i64) as u64;
+                    //         }
+                    //     }
+                    //     ebpf::JSET_REG => {
+                    //         if registers[dst] & registers[src] != 0 {
+                    //             next_pc = (next_pc as i64 + ins_offset as i64) as u64;
+                    //         }
+                    //     }
+                    //     ebpf::JNE_IMM => {
+                    //         if registers[dst] != ins_immediate as u64 {
+                    //             next_pc = (next_pc as i64 + ins_offset as i64) as u64;
+                    //         }
+                    //     }
+                    //     ebpf::JNE_REG => {
+                    //         if registers[dst] != registers[src] {
+                    //             next_pc = (next_pc as i64 + ins_offset as i64) as u64;
+                    //         }
+                    //     }
+                    //     ebpf::JSGT_IMM => {
+                    //         if (registers[dst] as i64) > ins_immediate {
+                    //             next_pc = (next_pc as i64 + ins_offset as i64) as u64;
+                    //         }
+                    //     }
+                    //     ebpf::JSGT_REG => {
+                    //         if (registers[dst] as i64) > registers[src] as i64 {
+                    //             next_pc = (next_pc as i64 + ins_offset as i64) as u64;
+                    //         }
+                    //     }
+                    //     ebpf::JSGE_IMM => {
+                    //         if (registers[dst] as i64) >= ins_immediate {
+                    //             next_pc = (next_pc as i64 + ins_offset as i64) as u64;
+                    //         }
+                    //     }
+                    //     ebpf::JSGE_REG => {
+                    //         if (registers[dst] as i64) >= registers[src] as i64 {
+                    //             next_pc = (next_pc as i64 + ins_offset as i64) as u64;
+                    //         }
+                    //     }
+                    //     ebpf::JSLT_IMM => {
+                    //         if (registers[dst] as i64) < ins_immediate {
+                    //             next_pc = (next_pc as i64 + ins_offset as i64) as u64;
+                    //         }
+                    //     }
+                    //     ebpf::JSLT_REG => {
+                    //         if (registers[dst] as i64) < registers[src] as i64 {
+                    //             next_pc = (next_pc as i64 + ins_offset as i64) as u64;
+                    //         }
+                    //     }
+                    //     ebpf::JSLE_IMM => {
+                    //         if (registers[dst] as i64) <= ins_immediate {
+                    //             next_pc = (next_pc as i64 + ins_offset as i64) as u64;
+                    //         }
+                    //     }
+                    //     ebpf::JSLE_REG => {
+                    //         if (registers[dst] as i64) <= registers[src] as i64 {
+                    //             next_pc = (next_pc as i64 + ins_offset as i64) as u64;
+                    //         }
+                    //     }
+                    //     _ => {
+                    //         continue;
+                    //     }
+                    // }
+
+                    // There's a branch at this vaddr.
+                    let branch = branches.entry(*vaddr).or_insert(Branch::new(
+                        outer_frame_details.file_name, // TODO: if these are None? Update them later?
+                        outer_frame_details.line_num,
+                    ));
+                    if next_pc == goto_pc {
+                        if goto_pc == (*vaddr + 8) {
+                            // The case when the goto is exactly the next instruction.
+                            branch.next_taken += 1;
+                            branch.goto_taken += 1;
+                        } else {
+                            branch.goto_taken += 1;
+                        }
+                    } else {
+                        branch.next_taken += 1;
+                    };
                 }
                 break; // only interested in the first frame deep, inners are just stack frames and we don't have the regs snapshots
             }
+        }
+    }
+
+    for (_vaddr, branch) in &branches {
+        if branch.goto_taken != 0 && branch.next_taken != 0 {
+            // Skip these ones - everything seems covered here.
+            continue;
+        }
+        match (&branch.file, branch.line) {
+            (Some(file), Some(line)) => {
+                write_branch_lcov(
+                    &file,
+                    line,
+                    if branch.next_taken == 0 {
+                        LcovBranch::GotoNotTaken
+                    } else {
+                        LcovBranch::NextNotTaken
+                    },
+                );
+            }
+            _ => {}
         }
     }
 
