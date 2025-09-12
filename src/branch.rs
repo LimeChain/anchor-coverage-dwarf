@@ -4,14 +4,14 @@ use addr2line::{
     Frame,
 };
 use anyhow::{anyhow, Result};
-use cargo_metadata::MetadataCommand;
 use solana_sbpf::ebpf;
-use std::{collections::BTreeMap, fs::OpenOptions, io::Write};
+use std::{collections::BTreeMap, fs::OpenOptions, path::Path};
 
 use crate::{vaddr::Vaddr, Dwarf, Insns, Regs, Vaddrs};
 
 type Branches = BTreeMap<Vaddr, Branch>;
 
+#[allow(dead_code)]
 fn get_indent(indent: i32) -> String {
     let mut s = String::new();
     (0..indent).into_iter().for_each(|_| s.push_str("\t"));
@@ -89,7 +89,13 @@ pub enum LcovBranch {
     GotoNotTaken,
 }
 
-fn write_branch_lcov(file: &str, line: u32, _taken: LcovBranch, _branch_id: u64) {
+fn write_branch_lcov<W: std::io::Write>(
+    lcov_file: &mut W,
+    file: &str,
+    line: u32,
+    _taken: LcovBranch,
+    _branch_id: u64,
+) -> Result<usize, std::io::Error> {
     let content = if _taken == LcovBranch::NextNotTaken
     /* true */
     {
@@ -113,21 +119,8 @@ end_of_record
 "
         )
     };
-    let sbf_trace_dir = std::env::var("SBF_TRACE_DIR").unwrap_or("sbf_trace_dir".into());
-    let mut lcov_file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(format!("{}/branches.lcov", sbf_trace_dir))
-        .expect("cannot open file");
 
-    let metadata = MetadataCommand::new().no_deps().exec().unwrap();
-    for pkg in metadata.workspace_packages() {
-        // eprintln!("pkg name: {} -> pkg manifest_path: {}", pkg.name, pkg.manifest_path);
-        if file.contains(&pkg.name.to_string()) {
-            let _ = lcov_file.write_all(content.as_bytes());
-            break;
-        }
-    }
+    lcov_file.write(content.as_bytes())
 }
 
 #[allow(dead_code)]
@@ -153,27 +146,27 @@ pub fn get_branches(
     let mut branches = Branches::new();
     let mut branches_total_count = 0;
     for (i, vaddr) in vaddrs.iter().enumerate() {
-        let mut indent = 0;
+        let mut _indent = 0;
         let frames = dwarf.loader.find_frames(*vaddr);
         if let Ok(frames) = frames {
             let mut frames = frames.peekable();
             while let Some(Some(frame)) = frames.next().ok() {
-                indent += 1;
+                _indent += 1;
                 let outer_frame_details = get_frame_details(&frame);
-                eprintln!(
-                            "{}⛳ 0x{:08x}({}) [{:016x}]=> frame 0x{:08x?}#{:?}@{:?}:{:?}:{:?}\n{}VM regs: {:08x?}\n",
-                            get_indent(indent-1),
-                            *vaddr,
-                            vaddr >> 3,
-                            insns[i],
-                            outer_frame_details.dw_die_offset,
-                            outer_frame_details.demangled_function_name,
-                            outer_frame_details.file_name,
-                            outer_frame_details.line_num,
-                            outer_frame_details.column,
-                            get_indent(indent),
-                            regs[i],
-                        );
+                // eprintln!(
+                //             "{}⛳ 0x{:08x}({}) [{:016x}]=> frame 0x{:08x?}#{:?}@{:?}:{:?}:{:?}\n{}VM regs: {:08x?}\n",
+                //             get_indent(_indent-1),
+                //             *vaddr,
+                //             vaddr >> 3,
+                //             insns[i],
+                //             outer_frame_details.dw_die_offset,
+                //             outer_frame_details.demangled_function_name,
+                //             outer_frame_details.file_name,
+                //             outer_frame_details.line_num,
+                //             outer_frame_details.column,
+                //             get_indent(indent),
+                //             regs[i],
+                //         );
 
                 let ins = insns[i].to_be_bytes();
                 // eprintln!("{:02x?}", ins);
@@ -184,14 +177,14 @@ pub fn get_branches(
                 let ins_offset = (ins[2] as u64 | ((ins[3] as u64) << 8)) * 8;
                 // let ins_immediate = i32::from_be_bytes(ins[4..].try_into().unwrap()) as i64;
                 if (ins_type & ebpf::BPF_JMP) == ebpf::BPF_JMP {
-                    let next_pc = vaddr + 8;
-                    eprintln!("very next instruction is: {:x}", next_pc);
+                    let _next_pc = vaddr + 8;
+                    // eprintln!("very next instruction is: {:x}", _next_pc);
                     let goto_pc = vaddr + 8 + ins_offset;
 
                     // get next_pc from the next batch of registers corresponding to the next vaddr.
-                    eprintln!("current regs: {:x?}", regs[i]);
+                    // eprintln!("current regs: {:x?}", regs[i]);
                     if regs.get(i + 1).is_some() {
-                        eprintln!("next regs: {:x?}", regs[i + 1]);
+                        // eprintln!("next regs: {:x?}", regs[i + 1]);
                     }
                     let Some(Some(mut next_pc)) =
                         regs.get(i + 1).map(|regs| regs[11].checked_shl(3))
@@ -201,11 +194,11 @@ pub fn get_branches(
 
                     // procdump: the PCs need to be shifted with regards to the text section offset.
                     next_pc += text_section_offset;
-                    eprintln!(
-                        "goto_pc calced from vaddr: {:x}, ins_offset: {}",
-                        goto_pc, ins_offset
-                    );
-                    eprintln!("from next regs -> next_pc is: {:x}", next_pc);
+                    // eprintln!(
+                    //     "goto_pc calced from vaddr: {:x}, ins_offset: {}",
+                    //     goto_pc, ins_offset
+                    // );
+                    // eprintln!("from next regs -> next_pc is: {:x}", next_pc);
 
                     match ins_type {
                         // ebpf::JA
@@ -277,18 +270,57 @@ pub fn get_branches(
     Ok(branches)
 }
 
-pub fn write_branch_coverage(branches: &Branches) {
+pub fn write_branch_coverage(branches: &Branches, pcs_path: &Path) -> Result<()> {
+    let path = pcs_path
+        .parent()
+        .and_then(|p| p.parent())
+        .ok_or(anyhow!("Can't get to root of the project"))?
+        .join("programs");
+
+    let programs: Vec<_> = std::fs::read_dir(&path)?
+        .map(|e| e.map(|e| e.file_name().display().to_string()))
+        .collect::<Result<Vec<_>, _>>()?;
+
+    let sbf_trace_dir = std::env::var("SBF_TRACE_DIR").unwrap_or("sbf_trace_dir".into());
+    let mut lcov_file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(format!("{}/branches.lcov", sbf_trace_dir))
+        .expect("cannot open file");
+
     for (_vaddr, branch) in branches {
         match (&branch.file, branch.line) {
             (Some(file), Some(line)) => {
+                if programs
+                    .iter()
+                    .filter(|e| file.contains(*e))
+                    .nth(0)
+                    .is_none()
+                {
+                    continue;
+                }
+
                 if branch.goto_taken != 0 && branch.next_taken != 0 {
                     // // Both hit. So add them.
-                    write_branch_lcov(&file, line, LcovBranch::NextNotTaken, branch.branch_id);
-                    write_branch_lcov(&file, line, LcovBranch::GotoNotTaken, branch.branch_id);
+                    write_branch_lcov(
+                        &mut lcov_file,
+                        &file,
+                        line,
+                        LcovBranch::NextNotTaken,
+                        branch.branch_id,
+                    )?;
+                    write_branch_lcov(
+                        &mut lcov_file,
+                        &file,
+                        line,
+                        LcovBranch::GotoNotTaken,
+                        branch.branch_id,
+                    )?;
                     // continue;
                 } else {
                     // Only one branch hit, act accordingly.
                     write_branch_lcov(
+                        &mut lcov_file,
                         &file,
                         line,
                         if branch.next_taken == 0 {
@@ -297,10 +329,11 @@ pub fn write_branch_coverage(branches: &Branches) {
                             LcovBranch::NextNotTaken
                         },
                         branch.branch_id,
-                    );
+                    )?;
                 }
             }
             _ => {}
         }
     }
+    Ok(())
 }

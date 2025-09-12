@@ -182,13 +182,13 @@ fn process_pcs_path(dwarfs: &[Dwarf], pcs_path: &Path) -> Result<Outcome> {
     );
 
     let (mut vaddrs, insns, regs) = read_vaddrs(pcs_path)?;
-    for va in vaddrs.iter() {
-        eprintln!(
-            "\t\t\t {:x} from {}",
-            *va,
-            pcs_path.to_string_lossy().to_string()
-        );
-    }
+    // for va in vaddrs.iter() {
+    //     eprintln!(
+    //         "\t\t\t {:x} from {}",
+    //         *va,
+    //         pcs_path.to_string_lossy().to_string()
+    //     );
+    // }
     eprintln!("Program counters read: {}", vaddrs.len());
 
     let (dwarf, mismatch) = find_applicable_dwarf(dwarfs, pcs_path, &mut vaddrs)?;
@@ -211,7 +211,7 @@ fn process_pcs_path(dwarfs: &[Dwarf], pcs_path: &Path) -> Result<Outcome> {
     // vaddrs.dedup_by_key::<_, Option<&Entry>>(|vaddr| dwarf.vaddr_entry_map.get(vaddr));
 
     if let Ok(branches) = branch::get_branches(&vaddrs, &insns, &regs, dwarf) {
-        branch::write_branch_coverage(&branches);
+        let _ = branch::write_branch_coverage(&branches, &pcs_path);
     }
 
     // smoelius: A `vaddr` could not have an entry because its file does not exist. Keep only those
