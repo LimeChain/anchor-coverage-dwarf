@@ -213,14 +213,6 @@ fn process_pcs_path(dwarfs: &[Dwarf], pcs_path: &Path) -> Result<Outcome> {
     // one hit to that file and line.
     // vaddrs.dedup_by_key::<_, Option<&Entry>>(|vaddr| dwarf.vaddr_entry_map.get(vaddr));
 
-    // eprintln!("find_symbol: {:?}", dwarf.loader.find_symbol(0x8d60));
-    // let range = dwarf.loader.find_location_range(0x8d58, 0x8d70);
-    // if let Ok(mut range_iter) = range {
-    //     while let Some((a, b, c)) = range_iter.next() {
-    //         eprintln!("{:08x?} {:08x?} {:?} {:?}", a, b, c.file, c.line);
-    //     }
-    // }
-
     fn get_indent(indent: i32) -> String {
         let mut s = String::new();
         (0..indent).into_iter().for_each(|_| s.push_str("\t"));
@@ -296,7 +288,7 @@ fn process_pcs_path(dwarfs: &[Dwarf], pcs_path: &Path) -> Result<Outcome> {
     pub enum LcovBranch {
         NextNotTaken,
         GotoNotTaken,
-    };
+    }
 
     fn write_branch_lcov(file: &str, line: u32, _taken: LcovBranch, _branch_id: u64) {
         let content = if
@@ -373,17 +365,14 @@ end_of_record
                 let ins = insns[i].to_be_bytes();
                 // eprintln!("{:02x?}", ins);
 
-                let registers = regs[i];
                 let ins_type = ins[0];
-                let ins_dst = (ins[1] & 0xf) as usize;
-                let ins_src = ((ins[1] & 0xf0) >> 4) as usize;
+                // let ins_dst = (ins[1] & 0xf) as usize;
+                // let ins_src = ((ins[1] & 0xf0) >> 4) as usize;
                 let ins_offset = (ins[2] as u64 | ((ins[3] as u64) << 8)) * 8;
-                let ins_immediate = i32::from_be_bytes(ins[4..].try_into().unwrap()) as i64;
+                // let ins_immediate = i32::from_be_bytes(ins[4..].try_into().unwrap()) as i64;
                 if (ins_type & ebpf::BPF_JMP) == ebpf::BPF_JMP {
-                    let mut next_pc = vaddr + 8;
+                    let next_pc = vaddr + 8;
                     eprintln!("very next instruction is: {:x}", next_pc);
-                    let dst = ins_dst;
-                    let src = ins_src;
                     let goto_pc = vaddr + 8 + ins_offset;
 
                     // get next_pc from the next batch of registers corresponding to the next vaddr.
@@ -604,22 +593,6 @@ fn read_vaddrs(pcs_path: &Path) -> Result<(Vaddrs, Insns, Regs)> {
 
     Ok((vaddrs, insns, regs))
 }
-
-// fn read_vaddrs(pcs_path: &Path) -> Result<Vaddrs> {
-//     let mut vaddrs = Vaddrs::new();
-//     let mut pcs_file = File::open(pcs_path)?;
-//     while let Ok(pc) = pcs_file.read_u64::<LittleEndian>() {
-//         let vaddr = pc << 3;
-//         let mut data_file = OpenOptions::new()
-//             .create(true)
-//             .append(true)
-//             .open("/tmp/pcs.txt")
-//             .expect("cannot open file");
-//         data_file.write_all(format!("0x{:08x?}\n", vaddr).as_bytes())?;
-//         vaddrs.push(vaddr);
-//     }
-//     Ok(vaddrs)
-// }
 
 fn find_applicable_dwarf<'a>(
     dwarfs: &'a [Dwarf],
