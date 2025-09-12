@@ -278,13 +278,15 @@ fn process_pcs_path(dwarfs: &[Dwarf], pcs_path: &Path) -> Result<Outcome> {
         line: Option<u32>,
         next_taken: u32,
         goto_taken: u32,
+        branch_id: u64,
     }
 
     impl Branch {
-        pub fn new(file: Option<&str>, line: Option<u32>) -> Self {
+        pub fn new(file: Option<&str>, line: Option<u32>, branch_id: u64) -> Self {
             Self {
                 file: file.map(|inner| inner.to_string()),
                 line,
+                branch_id,
                 ..Default::default()
             }
         }
@@ -296,8 +298,10 @@ fn process_pcs_path(dwarfs: &[Dwarf], pcs_path: &Path) -> Result<Outcome> {
         GotoNotTaken,
     };
 
-    fn write_branch_lcov(file: &str, line: u32, taken: LcovBranch) {
-        let content = if taken == LcovBranch::NextNotTaken {
+    fn write_branch_lcov(file: &str, line: u32, _taken: LcovBranch, _branch_id: u64) {
+        let content = if
+        /*taken == LcovBranch::NextNotTaken*/
+        true {
             format!(
                 "
 SF:{file}
@@ -342,6 +346,7 @@ end_of_record
     }
 
     let mut branches = BTreeMap::new();
+    let mut branches_total_count = 0;
     for (i, vaddr) in vaddrs.iter().enumerate() {
         let mut indent = 0;
         let frames = dwarf.loader.find_frames(*vaddr);
@@ -432,11 +437,22 @@ end_of_record
                         }
                     };
 
+                    // // Skip Rust closures
+                    // if let Some(demangled_fn_name) = &outer_frame_details.demangled_function_name {
+                    //     if demangled_fn_name.contains(r#"{{closure}}"#) {
+                    //         continue;
+                    //     }
+                    // }
+
                     // There's a branch at this vaddr.
-                    let branch = branches.entry(*vaddr).or_insert(Branch::new(
-                        outer_frame_details.file_name, // TODO: if these are None? Update them later?
-                        outer_frame_details.line_num,
-                    ));
+                    let branch = branches.entry(*vaddr).or_insert({
+                        branches_total_count += 1;
+                        Branch::new(
+                            outer_frame_details.file_name, // TODO: if these are None? Update them later?
+                            outer_frame_details.line_num,
+                            branches_total_count,
+                        )
+                    });
                     if next_pc == goto_pc {
                         if goto_pc == (*vaddr + 8) {
                             // The case when the goto is exactly the next instruction.
@@ -455,22 +471,26 @@ end_of_record
     }
 
     for (_vaddr, branch) in &branches {
-        // eprintln!("Branch: {:?}", branch);
-        if branch.goto_taken != 0 && branch.next_taken != 0 {
-            // Skip these ones - everything seems covered here.
-            continue;
-        }
         match (&branch.file, branch.line) {
             (Some(file), Some(line)) => {
-                write_branch_lcov(
-                    &file,
-                    line,
-                    if branch.next_taken == 0 {
-                        LcovBranch::GotoNotTaken
-                    } else {
-                        LcovBranch::NextNotTaken
-                    },
-                );
+                if branch.goto_taken != 0 && branch.next_taken != 0 {
+                    // // Both hit. So add them.
+                    // write_branch_lcov(&file, line, LcovBranch::NextNotTaken, branch.branch_id);
+                    // write_branch_lcov(&file, line, LcovBranch::GotoNotTaken, branch.branch_id);
+                    continue;
+                } else {
+                    // Only one branch hit, act accordingly.
+                    write_branch_lcov(
+                        &file,
+                        line,
+                        if branch.next_taken == 0 {
+                            LcovBranch::GotoNotTaken
+                        } else {
+                            LcovBranch::NextNotTaken
+                        },
+                        branch.branch_id,
+                    );
+                }
             }
             _ => {}
         }
