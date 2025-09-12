@@ -9,6 +9,11 @@ use std::{collections::BTreeMap, fs::OpenOptions, path::Path};
 
 use crate::{vaddr::Vaddr, Dwarf, Insns, Regs, Vaddrs};
 
+const PRINT_DEBUG: bool = false;
+const fn debug_enabled() -> bool {
+    PRINT_DEBUG
+}
+
 type Branches = BTreeMap<Vaddr, Branch>;
 
 #[allow(dead_code)]
@@ -153,20 +158,22 @@ pub fn get_branches(
             while let Some(Some(frame)) = frames.next().ok() {
                 _indent += 1;
                 let outer_frame_details = get_frame_details(&frame);
-                // eprintln!(
-                //             "{}⛳ 0x{:08x}({}) [{:016x}]=> frame 0x{:08x?}#{:?}@{:?}:{:?}:{:?}\n{}VM regs: {:08x?}\n",
-                //             get_indent(_indent-1),
-                //             *vaddr,
-                //             vaddr >> 3,
-                //             insns[i],
-                //             outer_frame_details.dw_die_offset,
-                //             outer_frame_details.demangled_function_name,
-                //             outer_frame_details.file_name,
-                //             outer_frame_details.line_num,
-                //             outer_frame_details.column,
-                //             get_indent(indent),
-                //             regs[i],
-                //         );
+                if debug_enabled() {
+                    eprintln!(
+                            "{}⛳ 0x{:08x}({}) [{:016x}]=> frame 0x{:08x?}#{:?}@{:?}:{:?}:{:?}\n{}VM regs: {:08x?}\n",
+                            get_indent(_indent-1),
+                            *vaddr,
+                            vaddr >> 3,
+                            insns[i],
+                            outer_frame_details.dw_die_offset,
+                            outer_frame_details.demangled_function_name,
+                            outer_frame_details.file_name,
+                            outer_frame_details.line_num,
+                            outer_frame_details.column,
+                            get_indent(_indent),
+                            regs[i],
+                        );
+                }
 
                 let ins = insns[i].to_be_bytes();
                 // eprintln!("{:02x?}", ins);
@@ -178,13 +185,17 @@ pub fn get_branches(
                 // let ins_immediate = i32::from_be_bytes(ins[4..].try_into().unwrap()) as i64;
                 if (ins_type & ebpf::BPF_JMP) == ebpf::BPF_JMP {
                     let _next_pc = vaddr + 8;
-                    // eprintln!("very next instruction is: {:x}", _next_pc);
+                    if debug_enabled() {
+                        eprintln!("very next instruction is: {:x}", _next_pc);
+                    }
                     let goto_pc = vaddr + 8 + ins_offset;
 
                     // get next_pc from the next batch of registers corresponding to the next vaddr.
-                    // eprintln!("current regs: {:x?}", regs[i]);
-                    if regs.get(i + 1).is_some() {
-                        // eprintln!("next regs: {:x?}", regs[i + 1]);
+                    if debug_enabled() {
+                        eprintln!("current regs: {:x?}", regs[i]);
+                        if regs.get(i + 1).is_some() {
+                            eprintln!("next regs: {:x?}", regs[i + 1]);
+                        }
                     }
                     let Some(Some(mut next_pc)) =
                         regs.get(i + 1).map(|regs| regs[11].checked_shl(3))
@@ -194,11 +205,13 @@ pub fn get_branches(
 
                     // procdump: the PCs need to be shifted with regards to the text section offset.
                     next_pc += text_section_offset;
-                    // eprintln!(
-                    //     "goto_pc calced from vaddr: {:x}, ins_offset: {}",
-                    //     goto_pc, ins_offset
-                    // );
-                    // eprintln!("from next regs -> next_pc is: {:x}", next_pc);
+                    if debug_enabled() {
+                        eprintln!(
+                            "goto_pc calced from vaddr: {:x}, ins_offset: {}",
+                            goto_pc, ins_offset
+                        );
+                        eprintln!("from next regs -> next_pc is: {:x}", next_pc);
+                    }
 
                     match ins_type {
                         // ebpf::JA
