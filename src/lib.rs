@@ -210,8 +210,9 @@ fn process_pcs_path(dwarfs: &[Dwarf], pcs_path: &Path) -> Result<Outcome> {
     // one hit to that file and line.
     // vaddrs.dedup_by_key::<_, Option<&Entry>>(|vaddr| dwarf.vaddr_entry_map.get(vaddr));
 
-    let branches = branch::get_branches(&vaddrs, &insns, &regs, dwarf);
-    branch::write_branch_coverage(&branches);
+    if let Ok(branches) = branch::get_branches(&vaddrs, &insns, &regs, dwarf) {
+        branch::write_branch_coverage(&branches);
+    }
 
     // smoelius: A `vaddr` could not have an entry because its file does not exist. Keep only those
     // `vaddr`s that have entries.
@@ -304,7 +305,7 @@ fn read_vaddrs(pcs_path: &Path) -> Result<(Vaddrs, Insns, Regs)> {
         }
 
         // NB: the pc is instruction indexed, not byte indexed, keeps it aligned to 8 bytes - hence << 3 -> *8
-        let vaddr = (data_trace[11] << 3) + 0x120; // TODO: Mind the .text offset in the dwarf - fix the hardcoded value.
+        let vaddr = data_trace[11] << 3;
 
         let mut data_file = OpenOptions::new()
             .create(true)
@@ -341,7 +342,7 @@ fn find_applicable_dwarf<'a>(
 
         // smoelius: Make the shift "permanent".
         for vaddr in vaddrs.iter_mut() {
-            // *vaddr += shift;
+            *vaddr += shift;
         }
 
         return Ok((dwarf, None));

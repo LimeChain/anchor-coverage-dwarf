@@ -1,12 +1,12 @@
-use std::{collections::BTreeMap, fs::OpenOptions, io::Write};
-
 use addr2line::{
     fallible_iterator::FallibleIterator,
     gimli::{self, ReaderOffset},
     Frame,
 };
+use anyhow::{anyhow, Result};
 use cargo_metadata::MetadataCommand;
 use solana_sbpf::ebpf;
+use std::{collections::BTreeMap, fs::OpenOptions, io::Write};
 
 use crate::{vaddr::Vaddr, Dwarf, Insns, Regs, Vaddrs};
 
@@ -136,7 +136,18 @@ fn get_frame_details_by_vaddr<'a>(dwarf: &Dwarf, vaddr: u64) -> Option<FrameDeta
     Some(frame_details)
 }
 
-pub fn get_branches(vaddrs: &Vaddrs, insns: &Insns, regs: &Regs, dwarf: &Dwarf) -> Branches {
+pub fn get_branches(
+    vaddrs: &Vaddrs,
+    insns: &Insns,
+    regs: &Regs,
+    dwarf: &Dwarf,
+) -> Result<Branches, anyhow::Error> {
+    let text_section_offset = dwarf
+        .loader
+        .get_section_range(b".text")
+        .ok_or(anyhow!("Can't get .text section begin address"))?
+        .begin;
+
     let mut branches = Branches::new();
     let mut branches_total_count = 0;
     for (i, vaddr) in vaddrs.iter().enumerate() {
@@ -185,7 +196,9 @@ pub fn get_branches(vaddrs: &Vaddrs, insns: &Insns, regs: &Regs, dwarf: &Dwarf) 
                     else {
                         continue;
                     };
-                    next_pc += 0x120;
+
+                    // procdump: the PCs need to be shifted with regards to the text section offset.
+                    next_pc += text_section_offset;
                     eprintln!(
                         "goto_pc calced from vaddr: {:x}, ins_offset: {}",
                         goto_pc, ins_offset
@@ -259,7 +272,7 @@ pub fn get_branches(vaddrs: &Vaddrs, insns: &Insns, regs: &Regs, dwarf: &Dwarf) 
             }
         }
     }
-    branches
+    Ok(branches)
 }
 
 pub fn write_branch_coverage(branches: &Branches) {
