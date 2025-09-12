@@ -272,7 +272,7 @@ fn process_pcs_path(dwarfs: &[Dwarf], pcs_path: &Path) -> Result<Outcome> {
         }
     }
 
-    #[derive(PartialEq, Clone, Default)]
+    #[derive(PartialEq, Clone, Default, Debug)]
     pub struct Branch {
         file: Option<String>,
         line: Option<u32>,
@@ -323,8 +323,14 @@ end_of_record
             .append(true)
             .open(format!("sbf_trace_dir/1.lcov"))
             .expect("cannot open file");
-        if file.contains("vault") {
-            let _ = lcov_file.write_all(content.as_bytes());
+
+        let metadata = MetadataCommand::new().no_deps().exec().unwrap();
+        for pkg in metadata.workspace_packages() {
+            // eprintln!("pkg name: {} -> pkg manifest_path: {}", pkg.name, pkg.manifest_path);
+            if file.contains(&pkg.name.to_string()) {
+                let _ = lcov_file.write_all(content.as_bytes());
+                break;
+            }
         }
     }
 
@@ -449,6 +455,7 @@ end_of_record
     }
 
     for (_vaddr, branch) in &branches {
+        // eprintln!("Branch: {:?}", branch);
         if branch.goto_taken != 0 && branch.next_taken != 0 {
             // Skip these ones - everything seems covered here.
             continue;
