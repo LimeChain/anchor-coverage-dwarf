@@ -202,9 +202,9 @@ fn process_pcs_path(dwarfs: &[Dwarf], pcs_path: &Path) -> Result<Outcome> {
         dwarf.path.strip_current_dir().display()
     );
 
-    // assert!(vaddrs
-    //     .first()
-    //     .is_some_and(|&vaddr| vaddr == dwarf.start_address));
+    assert!(vaddrs
+        .first()
+        .is_some_and(|&vaddr| vaddr == dwarf.start_address));
 
     // smoelius: If a sequence of program counters refer to the same file and line, treat them as
     // one hit to that file and line.
