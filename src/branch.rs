@@ -113,10 +113,11 @@ end_of_record
 "
         )
     };
+    let sbf_trace_dir = std::env::var("SBF_TRACE_DIR").unwrap_or("sbf_trace_dir".into());
     let mut lcov_file = OpenOptions::new()
         .create(true)
         .append(true)
-        .open(format!("sbf_trace_dir/1.lcov"))
+        .open(format!("{}/branches.lcov", sbf_trace_dir))
         .expect("cannot open file");
 
     let metadata = MetadataCommand::new().no_deps().exec().unwrap();
@@ -129,6 +130,7 @@ end_of_record
     }
 }
 
+#[allow(dead_code)]
 fn get_frame_details_by_vaddr<'a>(dwarf: &Dwarf, vaddr: u64) -> Option<FrameDetails<'a>> {
     let mut frame = dwarf.loader.find_frames(vaddr).ok()?;
     let frame = frame.next().ok()??;
