@@ -90,15 +90,15 @@ pub enum LcovBranch {
 }
 
 fn write_branch_lcov(file: &str, line: u32, _taken: LcovBranch, _branch_id: u64) {
-    let content = if
-    /*taken == LcovBranch::NextNotTaken*/
-    true {
+    let content = if _taken == LcovBranch::NextNotTaken
+    /* true */
+    {
         format!(
             "
 SF:{file}
 DA:{line},1
-BRDA:{line},0,0,0
-BRDA:{line},0,1,1
+BRDA:{line},{_branch_id},0,0
+BRDA:{line},{_branch_id},1,1
 end_of_record
 "
         )
@@ -107,8 +107,8 @@ end_of_record
             "
 SF:{file}
 DA:{line},1
-BRDA:{line},0,0,1
-BRDA:{line},0,1,0
+BRDA:{line},{_branch_id},0,1
+BRDA:{line},{_branch_id},1,0
 end_of_record
 "
         )
@@ -283,9 +283,9 @@ pub fn write_branch_coverage(branches: &Branches) {
             (Some(file), Some(line)) => {
                 if branch.goto_taken != 0 && branch.next_taken != 0 {
                     // // Both hit. So add them.
-                    // write_branch_lcov(&file, line, LcovBranch::NextNotTaken, branch.branch_id);
-                    // write_branch_lcov(&file, line, LcovBranch::GotoNotTaken, branch.branch_id);
-                    continue;
+                    write_branch_lcov(&file, line, LcovBranch::NextNotTaken, branch.branch_id);
+                    write_branch_lcov(&file, line, LcovBranch::GotoNotTaken, branch.branch_id);
+                    // continue;
                 } else {
                     // Only one branch hit, act accordingly.
                     write_branch_lcov(
