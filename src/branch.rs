@@ -181,14 +181,14 @@ pub fn get_branches(
                 let ins_type = ins[0];
                 // let ins_dst = (ins[1] & 0xf) as usize;
                 // let ins_src = ((ins[1] & 0xf0) >> 4) as usize;
-                let ins_offset = (ins[2] as u64 | ((ins[3] as u64) << 8)) * 8;
+                let ins_offset = ins[2] as u64 | ((ins[3] as u64) << 8);
                 // let ins_immediate = i32::from_be_bytes(ins[4..].try_into().unwrap()) as i64;
                 if (ins_type & ebpf::BPF_JMP) == ebpf::BPF_JMP {
                     let _next_pc = vaddr + 8;
                     if debug_enabled() {
                         eprintln!("very next instruction is: {:x}", _next_pc);
                     }
-                    let goto_pc = vaddr + 8 + ins_offset;
+                    let goto_pc = vaddr + ins_offset * 8 + 8;
 
                     // get next_pc from the next batch of registers corresponding to the next vaddr.
                     if debug_enabled() {
