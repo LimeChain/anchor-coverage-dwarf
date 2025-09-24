@@ -114,7 +114,7 @@ pub fn run(sbf_trace_dir: impl AsRef<Path>, debug: bool) -> Result<()> {
         return Ok(());
     }
 
-    let pcs_paths = files_with_extension(&sbf_trace_dir, "pcs")?;
+    let pcs_paths = files_with_extension(&sbf_trace_dir, "regs")?;
 
     for pcs_path in &pcs_paths {
         match process_pcs_path(&dwarfs, pcs_path, &src_paths)? {

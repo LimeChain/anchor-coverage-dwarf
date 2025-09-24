@@ -53,7 +53,7 @@ Usage: {0} [ANCHOR_TEST_ARGS]...
         anchor_test_with_debug(&options.args, &sbf_trace_dir)?;
     }
 
-    let pcs_paths = anchor_coverage::util::files_with_extension(&sbf_trace_dir, "pcs")?;
+    let pcs_paths = anchor_coverage::util::files_with_extension(&sbf_trace_dir, "regs")?;
 
     if pcs_paths.is_empty() {
         let try_running_message = grep_command()
