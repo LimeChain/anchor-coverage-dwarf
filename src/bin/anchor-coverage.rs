@@ -36,14 +36,22 @@ Usage: {0} [ANCHOR_TEST_ARGS]...
 
     let sbf_trace_dir = current_dir.join("sbf_trace_dir");
 
-    if sbf_trace_dir.try_exists()? {
-        eprintln!("Warning: Removing `{}`", sbf_trace_dir.display());
-        remove_dir_all(&sbf_trace_dir)?;
+    // procdump: sometimes it's just parsing that's needed so have a flag for this case
+    let parse_only = std::env::var("PARSE_ONLY")
+        .ok()
+        .and_then(|parse_only| parse_only.parse::<bool>().ok())
+        .unwrap_or(false);
+
+    if !parse_only {
+        if sbf_trace_dir.try_exists()? {
+            eprintln!("Warning: Removing `{}`", sbf_trace_dir.display());
+            remove_dir_all(&sbf_trace_dir)?;
+        }
+
+        create_dir_all(&sbf_trace_dir)?;
+
+        anchor_test_with_debug(&options.args, &sbf_trace_dir)?;
     }
-
-    create_dir_all(&sbf_trace_dir)?;
-
-    anchor_test_with_debug(&options.args, &sbf_trace_dir)?;
 
     let pcs_paths = anchor_coverage::util::files_with_extension(&sbf_trace_dir, "pcs")?;
 

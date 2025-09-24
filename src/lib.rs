@@ -1,9 +1,9 @@
 use addr2line::Loader;
 use anyhow::{anyhow, Result};
 use byteorder::{LittleEndian, ReadBytesExt};
-use cargo_metadata::MetadataCommand;
+use cargo_metadata::{Metadata, MetadataCommand};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashSet},
     env::var_os,
     fs::{metadata, File, OpenOptions},
     io::Write,
@@ -90,10 +90,12 @@ struct Mismatch {
 type FileLineCountMap<'a> = BTreeMap<&'a str, BTreeMap<u32, usize>>;
 
 pub fn run(sbf_trace_dir: impl AsRef<Path>, debug: bool) -> Result<()> {
+    let metadata = MetadataCommand::new().no_deps().exec()?;
     let mut lcov_paths = Vec::new();
     let mut closest_match_paths = Vec::new();
 
-    let debug_paths = debug_paths()?;
+    let debug_paths = debug_paths(&metadata)?;
+    let src_paths = src_paths(&metadata);
 
     let dwarfs = debug_paths
         .into_iter()
@@ -115,7 +117,7 @@ pub fn run(sbf_trace_dir: impl AsRef<Path>, debug: bool) -> Result<()> {
     let pcs_paths = files_with_extension(&sbf_trace_dir, "pcs")?;
 
     for pcs_path in &pcs_paths {
-        match process_pcs_path(&dwarfs, pcs_path)? {
+        match process_pcs_path(&dwarfs, pcs_path, &src_paths)? {
             Outcome::Lcov(lcov_path) => {
                 lcov_paths.push(lcov_path.strip_current_dir().to_path_buf());
             }
@@ -145,9 +147,20 @@ If you are done generating lcov files, try running:
     Ok(())
 }
 
-fn debug_paths() -> Result<Vec<PathBuf>> {
-    let metadata = MetadataCommand::new().no_deps().exec()?;
-    let target_directory = metadata.target_directory;
+fn src_paths<'a>(metadata: &'a Metadata) -> HashSet<&'a Path> {
+    let mut src_paths = HashSet::new();
+    for pkg in &metadata.packages {
+        for target in &pkg.targets {
+            if let Some(parent) = target.src_path.as_std_path().parent() {
+                src_paths.insert(parent);
+            }
+        }
+    }
+    src_paths
+}
+
+fn debug_paths(metadata: &Metadata) -> Result<Vec<PathBuf>> {
+    let target_directory = metadata.target_directory.clone();
     files_with_extension(target_directory.join("deploy"), "debug")
 }
 
@@ -174,22 +187,20 @@ fn build_dwarf(debug_path: &Path) -> Result<Dwarf> {
     })
 }
 
-fn process_pcs_path(dwarfs: &[Dwarf], pcs_path: &Path) -> Result<Outcome> {
+fn process_pcs_path(
+    dwarfs: &[Dwarf],
+    pcs_path: &Path,
+    src_paths: &HashSet<&Path>,
+) -> Result<Outcome> {
     eprintln!();
     eprintln!(
         "Program counters file: {}",
         pcs_path.strip_current_dir().display()
     );
 
-    let (mut vaddrs, insns, regs) = read_vaddrs(pcs_path)?;
-    // for va in vaddrs.iter() {
-    //     eprintln!(
-    //         "\t\t\t {:x} from {}",
-    //         *va,
-    //         pcs_path.to_string_lossy().to_string()
-    //     );
-    // }
+    let (mut vaddrs, regs) = read_vaddrs(pcs_path)?;
     eprintln!("Program counters read: {}", vaddrs.len());
+    let insns = read_insns(&pcs_path.with_extension("insns"))?;
 
     let (dwarf, mismatch) = find_applicable_dwarf(dwarfs, pcs_path, &mut vaddrs)?;
 
@@ -211,7 +222,7 @@ fn process_pcs_path(dwarfs: &[Dwarf], pcs_path: &Path) -> Result<Outcome> {
     // vaddrs.dedup_by_key::<_, Option<&Entry>>(|vaddr| dwarf.vaddr_entry_map.get(vaddr));
 
     if let Ok(branches) = branch::get_branches(&vaddrs, &insns, &regs, dwarf) {
-        let _ = branch::write_branch_coverage(&branches, &pcs_path);
+        let _ = branch::write_branch_coverage(&branches, &pcs_path, &src_paths);
     }
 
     // smoelius: A `vaddr` could not have an entry because its file does not exist. Keep only those
@@ -289,13 +300,21 @@ fn dump_vaddr_entry_map(vaddr_entry_map: BTreeMap<u64, Entry<'_>>) {
     }
 }
 
-fn read_vaddrs(pcs_path: &Path) -> Result<(Vaddrs, Insns, Regs)> {
+fn read_insns(insns_path: &Path) -> Result<Insns> {
+    let mut insns = Vec::new();
+    let mut insns_file = File::open(insns_path)?;
+    while let Ok(insn) = insns_file.read_u64::<LittleEndian>() {
+        insns.push(insn);
+    }
+    Ok(insns)
+}
+
+fn read_vaddrs(pcs_path: &Path) -> Result<(Vaddrs, Regs)> {
     let mut regs = Regs::new();
-    let mut insns = Insns::new();
     let mut vaddrs = Vaddrs::new();
     let mut pcs_file = File::open(pcs_path)?;
 
-    let mut data_trace = [0u64; 13];
+    let mut data_trace = [0u64; 12];
     'outer: loop {
         for i in 0..data_trace.len() {
             match pcs_file.read_u64::<LittleEndian>() {
@@ -315,12 +334,11 @@ fn read_vaddrs(pcs_path: &Path) -> Result<(Vaddrs, Insns, Regs)> {
         // data_file.write_all(format!("0x{:08x?} all: {:08x?}\n", vaddr, data_trace).as_bytes())?;
 
         vaddrs.push(vaddr);
-        insns.push(data_trace[12].to_be()); // we've stored the insn in data_trace[12] i.e the 13th element - 0..11 are the vm regs
         let regs_values: [u64; 12] = data_trace[0..12].try_into().unwrap();
         regs.push(regs_values);
     }
 
-    Ok((vaddrs, insns, regs))
+    Ok((vaddrs, regs))
 }
 
 fn find_applicable_dwarf<'a>(

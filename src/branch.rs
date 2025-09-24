@@ -5,7 +5,11 @@ use addr2line::{
 };
 use anyhow::{anyhow, Result};
 use solana_sbpf::ebpf;
-use std::{collections::BTreeMap, fs::OpenOptions, path::Path};
+use std::{
+    collections::{BTreeMap, HashSet},
+    fs::OpenOptions,
+    path::Path,
+};
 
 use crate::{vaddr::Vaddr, Dwarf, Insns, Regs, Vaddrs};
 
@@ -175,7 +179,7 @@ pub fn get_branches(
                         );
                 }
 
-                let ins = insns[i].to_be_bytes();
+                let ins = insns[i].to_le_bytes();
                 // eprintln!("{:02x?}", ins);
 
                 let ins_type = ins[0];
@@ -283,31 +287,24 @@ pub fn get_branches(
     Ok(branches)
 }
 
-pub fn write_branch_coverage(branches: &Branches, pcs_path: &Path) -> Result<()> {
-    let path = pcs_path
-        .parent()
-        .and_then(|p| p.parent())
-        .ok_or(anyhow!("Can't get to root of the project"))?
-        .join("programs");
-
-    let programs: Vec<_> = std::fs::read_dir(&path)?
-        .map(|e| e.map(|e| e.file_name().display().to_string()))
-        .collect::<Result<Vec<_>, _>>()?;
-
-    let sbf_trace_dir = std::env::var("SBF_TRACE_DIR").unwrap_or("sbf_trace_dir".into());
+pub fn write_branch_coverage(
+    branches: &Branches,
+    pcs_path: &Path,
+    src_paths: &HashSet<&Path>,
+) -> Result<()> {
+    let branches_lcov_file = pcs_path.with_file_name("branches.lcov");
     let mut lcov_file = OpenOptions::new()
         .create(true)
         .append(true)
-        .open(format!("{}/branches.lcov", sbf_trace_dir))
+        .open(&branches_lcov_file)
         .expect("cannot open file");
 
     for (_vaddr, branch) in branches {
         match (&branch.file, branch.line) {
             (Some(file), Some(line)) => {
-                if programs
+                if src_paths
                     .iter()
-                    .filter(|e| file.contains(*e))
-                    .nth(0)
+                    .find(|path| file.contains(&path.to_string_lossy().to_string()))
                     .is_none()
                 {
                     continue;
@@ -348,5 +345,12 @@ pub fn write_branch_coverage(branches: &Branches, pcs_path: &Path) -> Result<()>
             _ => {}
         }
     }
+
+    drop(lcov_file);
+    if std::fs::metadata(&branches_lcov_file)?.len() == 0 {
+        // if the branches lcov file is empty remove it so that genhtml won't get confused.
+        std::fs::remove_file(&branches_lcov_file)?;
+    }
+
     Ok(())
 }
