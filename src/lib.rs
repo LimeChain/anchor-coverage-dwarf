@@ -326,13 +326,6 @@ fn read_vaddrs(pcs_path: &Path) -> Result<(Vaddrs, Regs)> {
         // NB: the pc is instruction indexed, not byte indexed, keeps it aligned to 8 bytes - hence << 3 -> *8
         let vaddr = data_trace[11] << 3;
 
-        // let mut data_file = OpenOptions::new()
-        //     .create(true)
-        //     .append(true)
-        //     .open("/tmp/pcs.txt")
-        //     .expect("cannot open file");
-        // data_file.write_all(format!("0x{:08x?} all: {:08x?}\n", vaddr, data_trace).as_bytes())?;
-
         vaddrs.push(vaddr);
         let regs_values: [u64; 12] = data_trace[0..12].try_into().unwrap();
         regs.push(regs_values);
