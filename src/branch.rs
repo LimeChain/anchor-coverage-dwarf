@@ -251,13 +251,6 @@ pub fn get_branches(
                         }
                     };
 
-                    // // Skip Rust closures
-                    // if let Some(demangled_fn_name) = &outer_frame_details.demangled_function_name {
-                    //     if demangled_fn_name.contains(r#"{{closure}}"#) {
-                    //         continue;
-                    //     }
-                    // }
-
                     // There's a branch at this vaddr.
                     let branch = branches.entry(Vaddr::from(*vaddr)).or_insert({
                         branches_total_count += 1;
