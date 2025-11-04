@@ -1,43 +1,34 @@
 # anchor-coverage
 
-A wrapper around [`anchor test`] for computing test coverage
+A fork wrapper around [`anchor test`] for computing test code coverage.
 
 ## Steps to use
 
-1. Install the Agave validator [from source] after adding the following to the `[patch.crate-io]` section near the end of its Cargo.toml:
-
-   ```toml
-   solana-sbpf = { git = "https://github.com/trail-of-forks/sbpf-coverage" }
-   ```
-
-   For many situations, the following commands should suffice:
-
-   ```sh
-   sed -i '/^\[patch\.crates-io\]$/a solana-sbpf = { git = "https://github.com/trail-of-forks/sbpf-coverage" }' Cargo.toml
-   ./scripts/cargo-install-all.sh .
-   export PATH=$PWD/bin:$PATH
-   ```
-
-2. Add the following to `[profile.release]` section of your Anchor project's root Cargo.toml:
+1. Add the following to `[profile.release]` section of your Anchor project's root Cargo.toml:
 
    ```toml
    debug = true
+   lto = "off"
+   opt-level = 0
    ```
 
-   This tells Cargo to build with debug information.
+   This tells Cargo to build with debug information, without optimizations.
+   Be sure to also use SBF Version 1 allowing for dynamic stack frames. This is necessary
+   in the case of working without optimizations.
 
-3. Run `anchor-coverage` as follows:
+2. Run `anchor-coverage` as follows:
 
    ```sh
-   anchor-coverage [ANCHOR_TEST_ARGS]...
+   PLATFORM_TOOLS_VERSION=v1.51 # or higher like v1.52
+   cargo-build-sbf --tools-version ${PLATFORM_TOOLS_VERSION} --debug --arch v1 ; rm -rf sbf_trace_dir ; SBF_TRACE_DIR=sbf_trace_dir cargo test -- --nocapture ; RUST_BACKTRACE=1 SBPF_VERSION=v1 TOOLS_VERSION=${PLATFORM_TOOLS_VERSION} SBF_TRACE_DIR=sbf_trace_dir ./anchor-coverage-dwarf/target/debug/anchor-coverage
    ```
 
    This will create an `sbf_trace_dir` directory with an LCOV file for each executable run.
 
-4. Run the following command to generate and open an HTML coverage report:
+3. Run the following command to generate and open an HTML coverage report:
 
    ```sh
-   genhtml --output-directory coverage sbf_trace_dir/*.lcov && open coverage/index.html
+   genhtml --output-directory coverage sbf_trace_dir/*.lcov --rc branch_coverage=1 && open coverage/index.html
    ```
 
 ## Known problems
