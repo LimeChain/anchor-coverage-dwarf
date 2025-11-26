@@ -1,10 +1,8 @@
 use addr2line::Loader;
 use anyhow::{Result, anyhow};
 use byteorder::{LittleEndian, ReadBytesExt};
-use cargo_metadata::{Metadata, MetadataCommand};
 use std::{
     collections::{BTreeMap, HashSet},
-    env::var_os,
     fs::{File, OpenOptions, metadata},
     io::Write,
     path::{Path, PathBuf},
@@ -52,15 +50,15 @@ type VaddrEntryMap<'a> = BTreeMap<u64, Entry<'a>>;
 type FileLineCountMap<'a> = BTreeMap<&'a str, BTreeMap<u32, usize>>;
 
 pub fn run(sbf_trace_dir: PathBuf, debug: bool) -> Result<()> {
-    let metadata = MetadataCommand::new().no_deps().exec()?;
     let mut lcov_paths = Vec::new();
 
     let debug_paths = debug_paths()?;
-    let src_paths = src_paths(&metadata);
+    let src_paths = src_paths()?;
+    eprintln!("src_paths: {:?}", src_paths);
 
     let dwarfs = debug_paths
         .into_iter()
-        .map(|path| build_dwarf(&path))
+        .map(|path| build_dwarf(&path, &src_paths))
         .collect::<Result<Vec<_>>>()?;
 
     if dwarfs.is_empty() {
@@ -109,16 +107,12 @@ If you are done generating lcov files, try running:
     Ok(())
 }
 
-fn src_paths<'a>(metadata: &'a Metadata) -> HashSet<&'a Path> {
+fn src_paths() -> Result<HashSet<PathBuf>> {
     let mut src_paths = HashSet::new();
-    for pkg in &metadata.packages {
-        for target in &pkg.targets {
-            if let Some(parent) = target.src_path.as_std_path().parent() {
-                src_paths.insert(parent);
-            }
-        }
+    for src_path in std::env::var("SRC_PATHS")?.split(",") {
+        src_paths.insert(PathBuf::from(src_path));
     }
-    src_paths
+    Ok(src_paths)
 }
 
 fn debug_paths() -> Result<Vec<PathBuf>> {
@@ -131,7 +125,7 @@ fn debug_paths() -> Result<Vec<PathBuf>> {
     Ok(debug_files)
 }
 
-fn build_dwarf(debug_path: &Path) -> Result<Dwarf> {
+fn build_dwarf(debug_path: &Path, src_paths: &HashSet<PathBuf>) -> Result<Dwarf> {
     let start_address = start_address(debug_path)?;
 
     let loader = Loader::new(debug_path).map_err(|error| {
@@ -144,7 +138,7 @@ fn build_dwarf(debug_path: &Path) -> Result<Dwarf> {
 
     let loader = Box::leak(Box::new(loader));
 
-    let vaddr_entry_map = build_vaddr_entry_map(loader, debug_path)?;
+    let vaddr_entry_map = build_vaddr_entry_map(loader, debug_path, src_paths)?;
 
     let so_path = debug_path.with_extension("so");
     let so_hash = compute_hash(&std::fs::read(&so_path)?);
@@ -162,7 +156,7 @@ fn build_dwarf(debug_path: &Path) -> Result<Dwarf> {
 fn process_regs_path(
     dwarfs: &[Dwarf],
     regs_path: &Path,
-    src_paths: &HashSet<&Path>,
+    src_paths: &HashSet<PathBuf>,
 ) -> Result<Outcome> {
     eprintln!();
     eprintln!("Regs file: {}", regs_path.strip_current_dir().display());
@@ -206,20 +200,11 @@ fn process_regs_path(
     write_lcov_file(regs_path, file_line_count_map).map(Outcome::Lcov)
 }
 
-static CARGO_HOME: std::sync::LazyLock<PathBuf> = std::sync::LazyLock::new(|| {
-    if let Some(cargo_home) = var_os("CARGO_HOME") {
-        PathBuf::from(cargo_home)
-    } else {
-        #[allow(deprecated)]
-        #[cfg_attr(
-            dylint_lib = "inconsistent_qualification",
-            allow(inconsistent_qualification)
-        )]
-        std::env::home_dir().unwrap().join(".cargo")
-    }
-});
-
-fn build_vaddr_entry_map<'a>(loader: &'a Loader, debug_path: &Path) -> Result<VaddrEntryMap<'a>> {
+fn build_vaddr_entry_map<'a>(
+    loader: &'a Loader,
+    debug_path: &Path,
+    src_paths: &HashSet<PathBuf>,
+) -> Result<VaddrEntryMap<'a>> {
     let mut vaddr_entry_map = VaddrEntryMap::new();
     let metadata = metadata(debug_path)?;
     for vaddr in (0..metadata.len()).step_by(size_of::<u64>()) {
@@ -239,7 +224,12 @@ fn build_vaddr_entry_map<'a>(loader: &'a Loader, debug_path: &Path) -> Result<Va
         if !Path::new(file).try_exists()? {
             continue;
         }
-        if !include_cargo() && file.starts_with(CARGO_HOME.to_string_lossy().as_ref()) {
+        // procdump: ignore files other than what user has provided.
+        if src_paths
+            .iter()
+            .find(|src_path| file.starts_with(&src_path.to_string_lossy().to_string()))
+            .is_none()
+        {
             continue;
         }
         let Some(line) = location.line else {
@@ -370,8 +360,4 @@ fn write_lcov_file(regs_path: &Path, file_line_count_map: FileLineCountMap<'_>) 
     }
 
     Ok(lcov_path)
-}
-
-fn include_cargo() -> bool {
-    var_os("INCLUDE_CARGO").is_some()
 }

@@ -8,7 +8,7 @@ use solana_sbpf::ebpf;
 use std::{
     collections::{BTreeMap, HashSet},
     fs::OpenOptions,
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 use crate::{Dwarf, Insns, Regs, Vaddrs, vaddr::Vaddr};
@@ -286,7 +286,7 @@ pub fn get_branches(
 pub fn write_branch_coverage(
     branches: &Branches,
     regs_path: &Path,
-    src_paths: &HashSet<&Path>,
+    src_paths: &HashSet<PathBuf>,
 ) -> Result<()> {
     let branches_lcov_file = regs_path.with_file_name("branches.lcov");
     let mut lcov_file = OpenOptions::new()
