@@ -23,8 +23,8 @@ fn main() -> Result<()> {
 
 A tool for computing test coverage of Solana programs.
 
-Usage: {0} TODO...
-",
+Usage: SRC_PATHS=$PWD/src/[;$PWD/src_path2;...] \
+SBF_PATHS=$PWD/target/deploy[;$PWD/fixtures;...] SBF_TRACE_DIR=sbf_trace_dir {0}",
             env!("CARGO_PKG_NAME"),
             env!("CARGO_PKG_VERSION")
         );
