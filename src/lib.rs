@@ -73,7 +73,7 @@ pub fn run(sbf_trace_dir: PathBuf, debug: bool) -> Result<()> {
         return Ok(());
     }
 
-    let regs_paths = find_files_with_extension(&[sbf_trace_dir.clone()], "regs");
+    let regs_paths = find_files_with_extension(std::slice::from_ref(&sbf_trace_dir), "regs");
 
     for regs_path in &regs_paths {
         match process_regs_path(&dwarfs, regs_path, &src_paths) {
@@ -81,10 +81,7 @@ pub fn run(sbf_trace_dir: PathBuf, debug: bool) -> Result<()> {
                 lcov_paths.push(lcov_path.strip_current_dir().to_path_buf());
             }
             _ => {
-                eprintln!(
-                    "Skipping Regs file: {}",
-                    regs_path.to_string_lossy().to_string()
-                );
+                eprintln!("Skipping Regs file: {}", regs_path.to_string_lossy());
             }
         }
     }
@@ -118,8 +115,7 @@ fn src_paths() -> Result<HashSet<PathBuf>> {
 fn debug_paths() -> Result<Vec<PathBuf>> {
     let sbf_paths = std::env::var("SBF_PATHS")?
         .split(',')
-        .into_iter()
-        .map(|path| PathBuf::from(path))
+        .map(PathBuf::from)
         .collect::<Vec<_>>();
     let debug_files = find_files_with_extension(&sbf_paths, "debug");
     Ok(debug_files)
@@ -183,7 +179,7 @@ fn process_regs_path(
     // vaddrs.dedup_by_key::<_, Option<&Entry>>(|vaddr| dwarf.vaddr_entry_map.get(vaddr));
 
     if let Ok(branches) = branch::get_branches(&vaddrs, &insns, &regs, dwarf) {
-        let _ = branch::write_branch_coverage(&branches, &regs_path, &src_paths);
+        let _ = branch::write_branch_coverage(&branches, regs_path, src_paths);
     }
 
     // smoelius: A `vaddr` could not have an entry because its file does not exist. Keep only those
@@ -225,10 +221,9 @@ fn build_vaddr_entry_map<'a>(
             continue;
         }
         // procdump: ignore files other than what user has provided.
-        if src_paths
+        if !src_paths
             .iter()
-            .find(|src_path| file.starts_with(&src_path.to_string_lossy().to_string()))
-            .is_none()
+            .any(|src_path| file.starts_with(&src_path.to_string_lossy().to_string()))
         {
             continue;
         }
@@ -273,10 +268,10 @@ fn read_vaddrs(regs_path: &Path) -> Result<(Vaddrs, Regs)> {
 
     let mut data_trace = [0u64; 12];
     'outer: loop {
-        for i in 0..data_trace.len() {
+        for item in &mut data_trace {
             match regs_file.read_u64::<LittleEndian>() {
                 Err(_) => break 'outer,
-                Ok(reg) => data_trace[i] = reg,
+                Ok(reg) => *item = reg,
             }
         }
 

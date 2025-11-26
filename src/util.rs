@@ -22,13 +22,13 @@ pub fn find_files_with_extension(dirs: &[PathBuf], extension: &str) -> Vec<PathB
     let mut so_files = Vec::new();
 
     for dir in dirs {
-        if dir.is_dir() {
-            if let Ok(entries) = std::fs::read_dir(dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.is_file() && path.extension().is_some_and(|ext| ext == extension) {
-                        so_files.push(path);
-                    }
+        if dir.is_dir()
+            && let Ok(entries) = std::fs::read_dir(dir)
+        {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() && path.extension().is_some_and(|ext| ext == extension) {
+                    so_files.push(path);
                 }
             }
         }

@@ -23,7 +23,7 @@ type Branches = BTreeMap<Vaddr, Branch>;
 #[allow(dead_code)]
 fn get_indent(indent: i32) -> String {
     let mut s = String::new();
-    (0..indent).into_iter().for_each(|_| s.push_str("\t"));
+    (0..indent).for_each(|_| s.push('\t'));
     s
 }
 
@@ -159,7 +159,7 @@ pub fn get_branches(
         let frames = dwarf.loader.find_frames(*vaddr);
         if let Ok(frames) = frames {
             let mut frames = frames.peekable();
-            while let Some(Some(frame)) = frames.next().ok() {
+            while let Ok(Some(frame)) = frames.next() {
                 _indent += 1;
                 let outer_frame_details = get_frame_details(&frame);
                 if debug_enabled() {
@@ -295,50 +295,46 @@ pub fn write_branch_coverage(
         .open(&branches_lcov_file)
         .expect("cannot open file");
 
-    for (_vaddr, branch) in branches {
-        match (&branch.file, branch.line) {
-            (Some(file), Some(line)) => {
-                if src_paths
-                    .iter()
-                    .find(|path| file.contains(&path.to_string_lossy().to_string()))
-                    .is_none()
-                {
-                    continue;
-                }
-
-                if branch.goto_taken != 0 && branch.next_taken != 0 {
-                    // // Both hit. So add them.
-                    write_branch_lcov(
-                        &mut lcov_file,
-                        &file,
-                        line,
-                        LcovBranch::NextNotTaken,
-                        branch.branch_id,
-                    )?;
-                    write_branch_lcov(
-                        &mut lcov_file,
-                        &file,
-                        line,
-                        LcovBranch::GotoNotTaken,
-                        branch.branch_id,
-                    )?;
-                    // continue;
-                } else {
-                    // Only one branch hit, act accordingly.
-                    write_branch_lcov(
-                        &mut lcov_file,
-                        &file,
-                        line,
-                        if branch.next_taken == 0 {
-                            LcovBranch::GotoNotTaken
-                        } else {
-                            LcovBranch::NextNotTaken
-                        },
-                        branch.branch_id,
-                    )?;
-                }
+    for branch in branches.values() {
+        if let (Some(file), Some(line)) = (&branch.file, branch.line) {
+            if !src_paths
+                .iter()
+                .any(|path| file.contains(&path.to_string_lossy().to_string()))
+            {
+                continue;
             }
-            _ => {}
+
+            if branch.goto_taken != 0 && branch.next_taken != 0 {
+                // // Both hit. So add them.
+                write_branch_lcov(
+                    &mut lcov_file,
+                    file,
+                    line,
+                    LcovBranch::NextNotTaken,
+                    branch.branch_id,
+                )?;
+                write_branch_lcov(
+                    &mut lcov_file,
+                    file,
+                    line,
+                    LcovBranch::GotoNotTaken,
+                    branch.branch_id,
+                )?;
+                // continue;
+            } else {
+                // Only one branch hit, act accordingly.
+                write_branch_lcov(
+                    &mut lcov_file,
+                    file,
+                    line,
+                    if branch.next_taken == 0 {
+                        LcovBranch::GotoNotTaken
+                    } else {
+                        LcovBranch::NextNotTaken
+                    },
+                    branch.branch_id,
+                )?;
+            }
         }
     }
 

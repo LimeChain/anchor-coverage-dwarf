@@ -38,7 +38,7 @@ Usage: {0} TODO...
         current_dir.join("sbf_trace_dir")
     };
 
-    let regs_paths = find_files_with_extension(&[sbf_trace_dir.clone()], "regs");
+    let regs_paths = find_files_with_extension(std::slice::from_ref(&sbf_trace_dir), "regs");
 
     if regs_paths.is_empty() {
         bail!(
