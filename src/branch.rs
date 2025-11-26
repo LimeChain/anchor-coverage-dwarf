@@ -1,9 +1,9 @@
 use addr2line::{
+    Frame,
     fallible_iterator::FallibleIterator,
     gimli::{self, ReaderOffset},
-    Frame,
 };
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use solana_sbpf::ebpf;
 use std::{
     collections::{BTreeMap, HashSet},
@@ -11,7 +11,7 @@ use std::{
     path::Path,
 };
 
-use crate::{vaddr::Vaddr, Dwarf, Insns, Regs, Vaddrs};
+use crate::{Dwarf, Insns, Regs, Vaddrs, vaddr::Vaddr};
 
 const PRINT_DEBUG: bool = false;
 const fn debug_enabled() -> bool {
@@ -164,19 +164,20 @@ pub fn get_branches(
                 let outer_frame_details = get_frame_details(&frame);
                 if debug_enabled() {
                     eprintln!(
-                            "{}⛳ 0x{:08x}({}) [{:016x}]=> frame 0x{:08x?}#{:?}@{:?}:{:?}:{:?}\n{}VM regs: {:08x?}\n",
-                            get_indent(_indent-1),
-                            *vaddr,
-                            vaddr >> 3,
-                            insns[i],
-                            outer_frame_details.dw_die_offset,
-                            outer_frame_details.demangled_function_name,
-                            outer_frame_details.file_name,
-                            outer_frame_details.line_num,
-                            outer_frame_details.column,
-                            get_indent(_indent),
-                            regs[i],
-                        );
+                        "{}⛳ 0x{:08x}({}) [{:016x}]=> frame 0x{:08x?}#{:?}@{:?}:{:?}:{:?}\n{}VM \
+                         regs: {:08x?}\n",
+                        get_indent(_indent - 1),
+                        *vaddr,
+                        vaddr >> 3,
+                        insns[i],
+                        outer_frame_details.dw_die_offset,
+                        outer_frame_details.demangled_function_name,
+                        outer_frame_details.file_name,
+                        outer_frame_details.line_num,
+                        outer_frame_details.column,
+                        get_indent(_indent),
+                        regs[i],
+                    );
                 }
 
                 let ins = insns[i].to_le_bytes();
@@ -207,7 +208,7 @@ pub fn get_branches(
                         continue;
                     };
 
-                    // procdump: the PCs need to be shifted with regards to the text section offset.
+                    // procdump: the regs need to be shifted with regards to the text section offset.
                     next_pc += text_section_offset;
                     if debug_enabled() {
                         eprintln!(
@@ -256,7 +257,8 @@ pub fn get_branches(
                         branches_total_count += 1;
                         let branch_id = branches_total_count;
                         Branch::new(
-                            outer_frame_details.file_name, // TODO: if these are None? Update them later?
+                            outer_frame_details.file_name, /* TODO: if these are None? Update
+                                                            * them later? */
                             outer_frame_details.line_num,
                             branch_id,
                         )
@@ -273,7 +275,8 @@ pub fn get_branches(
                         branch.next_taken += 1;
                     };
                 }
-                break; // only interested in the first frame deep, inners are just stack frames and we don't have the regs snapshots
+                break; // only interested in the first frame deep, inners are just stack frames and
+                // we don't have the regs snapshots
             }
         }
     }
@@ -282,10 +285,10 @@ pub fn get_branches(
 
 pub fn write_branch_coverage(
     branches: &Branches,
-    pcs_path: &Path,
+    regs_path: &Path,
     src_paths: &HashSet<&Path>,
 ) -> Result<()> {
-    let branches_lcov_file = pcs_path.with_file_name("branches.lcov");
+    let branches_lcov_file = regs_path.with_file_name("branches.lcov");
     let mut lcov_file = OpenOptions::new()
         .create(true)
         .append(true)

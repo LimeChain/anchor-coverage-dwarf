@@ -7,15 +7,15 @@ use std::{
 };
 
 pub fn files_with_extension(dir: impl AsRef<Path>, extension: &str) -> Result<Vec<PathBuf>> {
-    let mut pcs_paths = Vec::new();
+    let mut regs_paths = Vec::new();
     for result in read_dir(dir)? {
         let entry = result?;
         let path = entry.path();
         if path.is_file() && path.extension() == Some(OsStr::new(extension)) {
-            pcs_paths.push(path);
+            regs_paths.push(path);
         }
     }
-    Ok(pcs_paths)
+    Ok(regs_paths)
 }
 
 pub trait StripCurrentDir {

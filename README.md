@@ -1,10 +1,10 @@
-# anchor-coverage
+# solana-coverage
 
-A fork wrapper around [`anchor test`] for computing test code coverage.
+A tool for computing test code coverage of Solana programs.
 
 ## Steps to use
 
-1. Add the following to `[profile.release]` section of your Anchor project's root Cargo.toml:
+1. Add the following to `[profile.release]` section of your Solana program's Cargo.toml:
 
    ```toml
    debug = true
@@ -16,7 +16,7 @@ A fork wrapper around [`anchor test`] for computing test code coverage.
    Be sure to also use SBF Version 1 allowing for dynamic stack frames. This is necessary
    in the case of working without optimizations.
 
-2. Run `anchor-coverage` as follows:
+2. Run `solana-coverage` as follows:
 
    ```sh
    PLATFORM_TOOLS_VERSION=v1.51 # or higher like v1.52
@@ -24,6 +24,7 @@ A fork wrapper around [`anchor test`] for computing test code coverage.
    ```
 
    This will create an `sbf_trace_dir` directory with an LCOV file for each executable run.
+   There's a `PARSE_ONLY` bool option to allow building prior to parsing.
 
 3. Run the following command to generate and open an HTML coverage report:
 

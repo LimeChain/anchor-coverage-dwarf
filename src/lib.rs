@@ -1,49 +1,25 @@
 use addr2line::Loader;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use byteorder::{LittleEndian, ReadBytesExt};
 use cargo_metadata::{Metadata, MetadataCommand};
+use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, HashSet},
     env::var_os,
-    fs::{metadata, File, OpenOptions},
+    fs::{File, OpenOptions, metadata},
     io::Write,
     path::{Path, PathBuf},
 };
 
-pub const DOCKER_BUILDER_VERSION: &str = "0.0.0";
-
-#[cfg(feature = "__anchor_cli")]
-mod anchor_cli_lib;
-#[cfg(feature = "__anchor_cli")]
-pub use anchor_cli_lib::__build_with_debug;
-#[cfg(feature = "__anchor_cli")]
-pub use anchor_cli_lib::{
-    __get_keypair as get_keypair, __is_hidden as is_hidden, __keys_sync as keys_sync,
-};
-
-#[cfg(feature = "__anchor_cli")]
-mod anchor_cli_config;
-#[cfg(feature = "__anchor_cli")]
-use anchor_cli_config as config;
-#[cfg(feature = "__anchor_cli")]
-pub use anchor_cli_config::{BootstrapMode, ConfigOverride, ProgramArch};
-
 mod branch;
-
-mod insn;
-use insn::Insn;
 
 mod start_address;
 use start_address::start_address;
 
 pub mod util;
-use util::{files_with_extension, StripCurrentDir};
+use util::{StripCurrentDir, files_with_extension};
 
 mod vaddr;
-use vaddr::Vaddr;
-
-#[cfg(test)]
-mod tests;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct Entry<'a> {
@@ -53,6 +29,9 @@ struct Entry<'a> {
 
 struct Dwarf {
     path: PathBuf,
+    #[allow(dead_code)]
+    so_path: PathBuf,
+    so_hash: String,
     start_address: u64,
     #[allow(dead_code, reason = "`vaddr` points into `loader`")]
     loader: &'static Loader,
@@ -61,7 +40,6 @@ struct Dwarf {
 
 enum Outcome {
     Lcov(PathBuf),
-    ClosestMatch(PathBuf),
 }
 
 type Vaddrs = Vec<u64>;
@@ -70,31 +48,13 @@ type Regs = Vec<[u64; 12]>;
 
 type VaddrEntryMap<'a> = BTreeMap<u64, Entry<'a>>;
 
-#[allow(dead_code)]
-#[derive(Debug)]
-struct ClosestMatch<'a, 'b> {
-    pcs_path: &'a Path,
-    debug_path: &'b Path,
-    mismatch: Mismatch,
-}
-
-#[allow(dead_code)]
-#[derive(Clone, Copy, Debug, Default)]
-struct Mismatch {
-    index: usize,
-    vaddr: Vaddr,
-    expected: Insn,
-    actual: Insn,
-}
-
 type FileLineCountMap<'a> = BTreeMap<&'a str, BTreeMap<u32, usize>>;
 
 pub fn run(sbf_trace_dir: impl AsRef<Path>, debug: bool) -> Result<()> {
     let metadata = MetadataCommand::new().no_deps().exec()?;
     let mut lcov_paths = Vec::new();
-    let mut closest_match_paths = Vec::new();
 
-    let debug_paths = debug_paths(&metadata)?;
+    let debug_paths = debug_paths()?;
     let src_paths = src_paths(&metadata);
 
     let dwarfs = debug_paths
@@ -114,33 +74,34 @@ pub fn run(sbf_trace_dir: impl AsRef<Path>, debug: bool) -> Result<()> {
         return Ok(());
     }
 
-    let pcs_paths = files_with_extension(&sbf_trace_dir, "regs")?;
+    let regs_paths = files_with_extension(&sbf_trace_dir, "regs")?;
 
-    for pcs_path in &pcs_paths {
-        match process_pcs_path(&dwarfs, pcs_path, &src_paths)? {
-            Outcome::Lcov(lcov_path) => {
+    for regs_path in &regs_paths {
+        match process_regs_path(&dwarfs, regs_path, &src_paths) {
+            Ok(Outcome::Lcov(lcov_path)) => {
                 lcov_paths.push(lcov_path.strip_current_dir().to_path_buf());
             }
-            Outcome::ClosestMatch(closest_match_path) => {
-                closest_match_paths.push(closest_match_path.strip_current_dir().to_path_buf());
+            _ => {
+                eprintln!(
+                    "Skipping Regs file: {}",
+                    regs_path.to_string_lossy().to_string()
+                );
             }
         }
     }
 
     eprintln!(
         "
-Processed {} of {} program counter files
+Processed {} of {} regs files
 
 Lcov files written: {lcov_paths:#?}
-
-Closest match files written: {closest_match_paths:#?}
 
 If you are done generating lcov files, try running:
 
     genhtml --output-directory coverage {}/*.lcov --rc branch_coverage=1 && open coverage/index.html
 ",
         lcov_paths.len(),
-        pcs_paths.len(),
+        regs_paths.len(),
         sbf_trace_dir.as_ref().strip_current_dir().display()
     );
 
@@ -159,9 +120,14 @@ fn src_paths<'a>(metadata: &'a Metadata) -> HashSet<&'a Path> {
     src_paths
 }
 
-fn debug_paths(metadata: &Metadata) -> Result<Vec<PathBuf>> {
-    let target_directory = metadata.target_directory.clone();
-    files_with_extension(target_directory.join("deploy"), "debug")
+fn debug_paths() -> Result<Vec<PathBuf>> {
+    let sbf_paths = std::env::var("SBF_PATHS")?
+        .split(',')
+        .into_iter()
+        .map(|path| PathBuf::from(path))
+        .collect::<Vec<_>>();
+    let debug_files = find_files_with_extension(&sbf_paths, "debug");
+    Ok(debug_files)
 }
 
 fn build_dwarf(debug_path: &Path) -> Result<Dwarf> {
@@ -179,50 +145,50 @@ fn build_dwarf(debug_path: &Path) -> Result<Dwarf> {
 
     let vaddr_entry_map = build_vaddr_entry_map(loader, debug_path)?;
 
+    let so_path = debug_path.with_extension("so");
+    let so_hash = compute_hash(&std::fs::read(&so_path)?);
+
     Ok(Dwarf {
         path: debug_path.to_path_buf(),
+        so_path,
+        so_hash,
         start_address,
         loader,
         vaddr_entry_map,
     })
 }
 
-fn process_pcs_path(
+fn process_regs_path(
     dwarfs: &[Dwarf],
-    pcs_path: &Path,
+    regs_path: &Path,
     src_paths: &HashSet<&Path>,
 ) -> Result<Outcome> {
     eprintln!();
-    eprintln!(
-        "Program counters file: {}",
-        pcs_path.strip_current_dir().display()
-    );
+    eprintln!("Regs file: {}", regs_path.strip_current_dir().display());
 
-    let (mut vaddrs, regs) = read_vaddrs(pcs_path)?;
-    eprintln!("Program counters read: {}", vaddrs.len());
-    let insns = read_insns(&pcs_path.with_extension("insns"))?;
+    let (mut vaddrs, regs) = read_vaddrs(regs_path)?;
+    eprintln!("Regs read: {}", vaddrs.len());
+    let insns = read_insns(&regs_path.with_extension("insns"))?;
 
-    let (dwarf, mismatch) = find_applicable_dwarf(dwarfs, pcs_path, &mut vaddrs)?;
-
-    if let Some(mismatch) = mismatch {
-        return write_closest_match(pcs_path, dwarf, mismatch).map(Outcome::ClosestMatch);
-    }
+    let dwarf = find_applicable_dwarf(dwarfs, regs_path, &mut vaddrs)?;
 
     eprintln!(
         "Applicable dwarf: {}",
         dwarf.path.strip_current_dir().display()
     );
 
-    assert!(vaddrs
-        .first()
-        .is_some_and(|&vaddr| vaddr == dwarf.start_address));
+    assert!(
+        vaddrs
+            .first()
+            .is_some_and(|&vaddr| vaddr == dwarf.start_address)
+    );
 
-    // smoelius: If a sequence of program counters refer to the same file and line, treat them as
+    // smoelius: If a sequence of Regs refer to the same file and line, treat them as
     // one hit to that file and line.
     // vaddrs.dedup_by_key::<_, Option<&Entry>>(|vaddr| dwarf.vaddr_entry_map.get(vaddr));
 
     if let Ok(branches) = branch::get_branches(&vaddrs, &insns, &regs, dwarf) {
-        let _ = branch::write_branch_coverage(&branches, &pcs_path, &src_paths);
+        let _ = branch::write_branch_coverage(&branches, &regs_path, &src_paths);
     }
 
     // smoelius: A `vaddr` could not have an entry because its file does not exist. Keep only those
@@ -236,7 +202,7 @@ fn process_pcs_path(
 
     let file_line_count_map = build_file_line_count_map(&dwarf.vaddr_entry_map, vaddrs);
 
-    write_lcov_file(pcs_path, file_line_count_map).map(Outcome::Lcov)
+    write_lcov_file(regs_path, file_line_count_map).map(Outcome::Lcov)
 }
 
 static CARGO_HOME: std::sync::LazyLock<PathBuf> = std::sync::LazyLock::new(|| {
@@ -309,15 +275,15 @@ fn read_insns(insns_path: &Path) -> Result<Insns> {
     Ok(insns)
 }
 
-fn read_vaddrs(pcs_path: &Path) -> Result<(Vaddrs, Regs)> {
+fn read_vaddrs(regs_path: &Path) -> Result<(Vaddrs, Regs)> {
     let mut regs = Regs::new();
     let mut vaddrs = Vaddrs::new();
-    let mut pcs_file = File::open(pcs_path)?;
+    let mut regs_file = File::open(regs_path)?;
 
     let mut data_trace = [0u64; 12];
     'outer: loop {
         for i in 0..data_trace.len() {
-            match pcs_file.read_u64::<LittleEndian>() {
+            match regs_file.read_u64::<LittleEndian>() {
                 Err(_) => break 'outer,
                 Ok(reg) => data_trace[i] = reg,
             }
@@ -336,112 +302,29 @@ fn read_vaddrs(pcs_path: &Path) -> Result<(Vaddrs, Regs)> {
 
 fn find_applicable_dwarf<'a>(
     dwarfs: &'a [Dwarf],
-    pcs_path: &Path,
+    regs_path: &Path,
     vaddrs: &mut [u64],
-) -> Result<(&'a Dwarf, Option<Mismatch>)> {
-    let dwarf_mismatches = collect_dwarf_mismatches(dwarfs, pcs_path, vaddrs)?;
-
-    if let Some((dwarf, _)) = dwarf_mismatches
+) -> Result<&'a Dwarf> {
+    // Get the SHA-256 identifier for the Executable that has generated this tracing data.
+    let exec_sha256 = std::fs::read_to_string(regs_path.with_extension("exec.sha256"))?;
+    let dwarf = dwarfs
         .iter()
-        .find(|(_, mismatch)| mismatch.is_none())
-    {
-        let vaddr_first = *vaddrs.first().unwrap();
+        .find(|dwarf| dwarf.so_hash == exec_sha256)
+        .ok_or(anyhow!(
+            "Cannot find the shared object that corresponds to: {}",
+            exec_sha256
+        ))?;
 
-        assert!(dwarf.start_address >= vaddr_first);
-
-        let shift = dwarf.start_address - vaddr_first;
-
-        // smoelius: Make the shift "permanent".
-        for vaddr in vaddrs.iter_mut() {
-            *vaddr += shift;
-        }
-
-        return Ok((dwarf, None));
-    }
-
-    Ok(dwarf_mismatches
-        .into_iter()
-        .max_by_key(|(_, mismatch)| mismatch.as_ref().unwrap().index)
-        .unwrap())
-}
-
-fn collect_dwarf_mismatches<'a>(
-    dwarfs: &'a [Dwarf],
-    pcs_path: &Path,
-    vaddrs: &[u64],
-) -> Result<Vec<(&'a Dwarf, Option<Mismatch>)>> {
-    dwarfs
-        .iter()
-        .map(|dwarf| {
-            let mismatch = dwarf_mismatch(vaddrs, dwarf, pcs_path)?;
-            Ok((dwarf, mismatch))
-        })
-        .collect()
-}
-
-fn dwarf_mismatch(vaddrs: &[u64], dwarf: &Dwarf, pcs_path: &Path) -> Result<Option<Mismatch>> {
-    use std::io::{Seek, SeekFrom};
-
-    let Some(&vaddr_first) = vaddrs.first() else {
-        return Ok(Some(Mismatch::default()));
-    };
-
-    if dwarf.start_address < vaddr_first {
-        return Ok(Some(Mismatch::default()));
-    }
-
-    // smoelius: `start_address` is both an offset into the ELF file and a virtual address. The
-    // current virtual addresses are offsets from the start of the text section. The current virtual
-    // addresses must be shifted so that the first matches the start address.
+    let vaddr_first = *vaddrs.first().unwrap();
+    assert!(dwarf.start_address >= vaddr_first);
     let shift = dwarf.start_address - vaddr_first;
 
-    let mut so_file = File::open(dwarf.path.with_extension("so"))?;
-    let mut insns_file = File::open(pcs_path.with_extension("insns"))?;
-
-    for (index, &vaddr) in vaddrs.iter().enumerate() {
-        let vaddr = vaddr + shift;
-
-        so_file.seek(SeekFrom::Start(vaddr))?;
-        let expected = so_file.read_u64::<LittleEndian>()?;
-
-        let actual = insns_file.read_u64::<LittleEndian>()?;
-
-        // smoelius: 0x85 is a function call. That they would be patched and differ is not
-        // surprising.
-        if expected & 0xff == 0x85 {
-            continue;
-        }
-
-        if expected != actual {
-            return Ok(Some(Mismatch {
-                index,
-                vaddr: Vaddr::from(vaddr),
-                expected: Insn::from(expected),
-                actual: Insn::from(actual),
-            }));
-        }
+    // smoelius: Make the shift "permanent".
+    for vaddr in vaddrs.iter_mut() {
+        *vaddr += shift;
     }
 
-    Ok(None)
-}
-
-fn write_closest_match(pcs_path: &Path, dwarf: &Dwarf, mismatch: Mismatch) -> Result<PathBuf> {
-    let closest_match_path = pcs_path.with_extension("closest_match");
-    let mut file = OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .open(&closest_match_path)?;
-    writeln!(
-        file,
-        "{:#?}",
-        ClosestMatch {
-            pcs_path,
-            debug_path: &dwarf.path,
-            mismatch
-        }
-    )?;
-    Ok(closest_match_path)
+    Ok(dwarf)
 }
 
 fn build_file_line_count_map<'a>(
@@ -467,8 +350,8 @@ fn build_file_line_count_map<'a>(
     file_line_count_map
 }
 
-fn write_lcov_file(pcs_path: &Path, file_line_count_map: FileLineCountMap<'_>) -> Result<PathBuf> {
-    let lcov_path = Path::new(pcs_path).with_extension("lcov");
+fn write_lcov_file(regs_path: &Path, file_line_count_map: FileLineCountMap<'_>) -> Result<PathBuf> {
+    let lcov_path = Path::new(regs_path).with_extension("lcov");
 
     let mut file = OpenOptions::new()
         .create(true)
@@ -490,4 +373,27 @@ fn write_lcov_file(pcs_path: &Path, file_line_count_map: FileLineCountMap<'_>) -
 
 fn include_cargo() -> bool {
     var_os("INCLUDE_CARGO").is_some()
+}
+
+fn find_files_with_extension(dirs: &[PathBuf], extension: &str) -> Vec<PathBuf> {
+    let mut so_files = Vec::new();
+
+    for dir in dirs {
+        if dir.is_dir() {
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_file() && path.extension().is_some_and(|ext| ext == extension) {
+                        so_files.push(path);
+                    }
+                }
+            }
+        }
+    }
+
+    so_files
+}
+
+fn compute_hash(slice: &[u8]) -> String {
+    hex::encode(Sha256::digest(slice).as_slice())
 }
