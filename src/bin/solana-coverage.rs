@@ -42,7 +42,7 @@ Usage: {0} TODO...
 
     if regs_paths.is_empty() {
         bail!(
-            "Found no program counter files in: {}
+            "Found no regs files in: {}
 Are you sure you run your tests with register tracing enabled",
             sbf_trace_dir.strip_current_dir().display(),
         );
