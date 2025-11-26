@@ -14,17 +14,38 @@ A tool for computing test code coverage of Solana programs.
 
    This tells Cargo to build with debug information, without optimizations.
    Be sure to also use SBF Version 1 allowing for dynamic stack frames. This is necessary
-   in the case of working without optimizations.
-
-2. Run `solana-coverage` as follows:
+   in the case of working without optimizations. Also be sure to use the latest platform-tools version v1.51 or higher.
 
    ```sh
-   PLATFORM_TOOLS_VERSION=v1.51 # or higher like v1.52
-   cargo-build-sbf --tools-version ${PLATFORM_TOOLS_VERSION} --debug --arch v1 ; rm -rf sbf_trace_dir ; SBF_TRACE_DIR=sbf_trace_dir cargo test -- --nocapture ; RUST_BACKTRACE=1 SBPF_VERSION=v1 TOOLS_VERSION=${PLATFORM_TOOLS_VERSION} SBF_TRACE_DIR=sbf_trace_dir ./anchor-coverage-dwarf/target/debug/anchor-coverage
+   cargo build-sbf --debug --tools-version v1.51 --arch v1
    ```
 
-   This will create an `sbf_trace_dir` directory with an LCOV file for each executable run.
-   There's a `PARSE_ONLY` bool option to allow building prior to parsing.
+2. Execution:
+
+   This tool is agnostic from the framework used (Anchor, StarFrame, Typhoon)
+   for collecting the tracing data. In other words it's up to the user to
+   generate the register tracing data which can later be ingested with this tool.
+
+   For example in the case of having a few Rust tests for your program using either
+   LiteSVM (or maybe some TS tests) or Mollusk you would typically do:
+
+   ```sh
+   SBF_OUT_DIR=target/deploy SBF_TRACE_DIR=$PWD/sbf_trace_dir cargo test -- --nocapture
+   ```
+
+   After the tests are finished the register tracing data will be dumped into `sbf_trace_dir`
+   and this is the data this tool can ingest and generate code coverage statistics on top of it: 
+
+   Finally after having executed your tests:
+
+   ```sh
+   RUST_BACKTRACE=1 SRC_PATHS=$PWD/src/ SBF_PATHS=$PWD/target/deploy SBF_TRACE_DIR=sbf_trace_dir solana-coverage
+   ```
+
+   Environment variables:
+   * SRC_PATHS - SRC paths that will only be used for generating coverage (split with a `,`)
+   * SBF_PATHS - the SBF fixture paths (split with a `,`)
+   * SBF_TRACE_DIR - the location that contains the register tracing data
 
 3. Run the following command to generate and open an HTML coverage report:
 
@@ -34,7 +55,7 @@ A tool for computing test code coverage of Solana programs.
 
 ## Known problems
 
-`anchor-coverage` uses Dwarf debug information, not [LLVM instrumentation-based coverage], to map instructions to source code locations. This can have confusing implications. For example:
+`solana-coverage` uses Dwarf debug information, not [LLVM instrumentation-based coverage], to map instructions to source code locations. This can have confusing implications. For example:
 
 - one line can appear directly before another
 - the latter line can have a greater number of hits
@@ -59,11 +80,3 @@ The following is an example. The line with the assignment to `signer` is hit onl
   Line hits: 0
   ```
   Check that you added `debug = true` to the `[profile.release]` section of your Anchor project's root Cargo.toml.
-
-## Links
-
-- Useful reference re LCOV: https://github.com/linux-test-project/lcov/issues/113#issuecomment-762335134
-
-[LLVM instrumentation-based coverage]: https://llvm.org/docs/CoverageMappingFormat.html
-[`anchor test`]: https://www.anchor-lang.com/docs/references/cli#test
-[from source]: https://docs.anza.xyz/cli/install#building-from-source
