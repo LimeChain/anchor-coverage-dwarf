@@ -54,7 +54,6 @@ pub fn run(sbf_trace_dir: PathBuf, debug: bool) -> Result<()> {
 
     let debug_paths = debug_paths()?;
     let src_paths = src_paths()?;
-    eprintln!("src_paths: {:?}", src_paths);
 
     let dwarfs = debug_paths
         .into_iter()
@@ -70,6 +69,7 @@ pub fn run(sbf_trace_dir: PathBuf, debug: bool) -> Result<()> {
         for dwarf in dwarfs {
             dump_vaddr_entry_map(dwarf.vaddr_entry_map);
         }
+        eprintln!("Exiting debug mode.");
         return Ok(());
     }
 
