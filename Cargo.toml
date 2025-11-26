@@ -1,6 +1,6 @@
 [package]
 name = "solana-coverage"
-version = "0.1.0"
+version = "1.0.0"
 authors = ["Boris Astardzhiev <boris.astardzhiev@gmail.com>", "Samuel Moelius <sam@moeli.us>"]
 description = "A tool for computing test coverage of a Solana program"
 edition = "2024"
@@ -11,6 +11,6 @@ addr2line = "0.25"
 anyhow = "1.0"
 byteorder = "1.5"
 # BPF_ consts
-solana-sbpf = "0.10.0"
+solana-sbpf = "0.13.1"
 sha2 = "0.10.9"
 hex = "0.4.3"
