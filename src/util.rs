@@ -1,22 +1,9 @@
-use anyhow::Result;
 use std::{
     env::current_dir,
-    ffi::OsStr,
-    fs::read_dir,
     path::{Path, PathBuf},
 };
 
-pub fn files_with_extension(dir: impl AsRef<Path>, extension: &str) -> Result<Vec<PathBuf>> {
-    let mut regs_paths = Vec::new();
-    for result in read_dir(dir)? {
-        let entry = result?;
-        let path = entry.path();
-        if path.is_file() && path.extension() == Some(OsStr::new(extension)) {
-            regs_paths.push(path);
-        }
-    }
-    Ok(regs_paths)
-}
+use sha2::{Digest, Sha256};
 
 pub trait StripCurrentDir {
     fn strip_current_dir(&self) -> &Self;
@@ -29,4 +16,27 @@ impl StripCurrentDir for Path {
         };
         self.strip_prefix(current_dir).unwrap_or(self)
     }
+}
+
+pub fn find_files_with_extension(dirs: &[PathBuf], extension: &str) -> Vec<PathBuf> {
+    let mut so_files = Vec::new();
+
+    for dir in dirs {
+        if dir.is_dir() {
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_file() && path.extension().is_some_and(|ext| ext == extension) {
+                        so_files.push(path);
+                    }
+                }
+            }
+        }
+    }
+
+    so_files
+}
+
+pub fn compute_hash(slice: &[u8]) -> String {
+    hex::encode(Sha256::digest(slice).as_slice())
 }

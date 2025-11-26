@@ -2,7 +2,6 @@ use addr2line::Loader;
 use anyhow::{Result, anyhow};
 use byteorder::{LittleEndian, ReadBytesExt};
 use cargo_metadata::{Metadata, MetadataCommand};
-use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeMap, HashSet},
     env::var_os,
@@ -17,7 +16,9 @@ mod start_address;
 use start_address::start_address;
 
 pub mod util;
-use util::{StripCurrentDir, files_with_extension};
+use util::StripCurrentDir;
+
+use crate::util::{compute_hash, find_files_with_extension};
 
 mod vaddr;
 
@@ -50,7 +51,7 @@ type VaddrEntryMap<'a> = BTreeMap<u64, Entry<'a>>;
 
 type FileLineCountMap<'a> = BTreeMap<&'a str, BTreeMap<u32, usize>>;
 
-pub fn run(sbf_trace_dir: impl AsRef<Path>, debug: bool) -> Result<()> {
+pub fn run(sbf_trace_dir: PathBuf, debug: bool) -> Result<()> {
     let metadata = MetadataCommand::new().no_deps().exec()?;
     let mut lcov_paths = Vec::new();
 
@@ -74,7 +75,7 @@ pub fn run(sbf_trace_dir: impl AsRef<Path>, debug: bool) -> Result<()> {
         return Ok(());
     }
 
-    let regs_paths = files_with_extension(&sbf_trace_dir, "regs")?;
+    let regs_paths = find_files_with_extension(&[sbf_trace_dir.clone()], "regs");
 
     for regs_path in &regs_paths {
         match process_regs_path(&dwarfs, regs_path, &src_paths) {
@@ -102,7 +103,7 @@ If you are done generating lcov files, try running:
 ",
         lcov_paths.len(),
         regs_paths.len(),
-        sbf_trace_dir.as_ref().strip_current_dir().display()
+        sbf_trace_dir.as_path().strip_current_dir().display()
     );
 
     Ok(())
@@ -373,27 +374,4 @@ fn write_lcov_file(regs_path: &Path, file_line_count_map: FileLineCountMap<'_>) 
 
 fn include_cargo() -> bool {
     var_os("INCLUDE_CARGO").is_some()
-}
-
-fn find_files_with_extension(dirs: &[PathBuf], extension: &str) -> Vec<PathBuf> {
-    let mut so_files = Vec::new();
-
-    for dir in dirs {
-        if dir.is_dir() {
-            if let Ok(entries) = std::fs::read_dir(dir) {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.is_file() && path.extension().is_some_and(|ext| ext == extension) {
-                        so_files.push(path);
-                    }
-                }
-            }
-        }
-    }
-
-    so_files
-}
-
-fn compute_hash(slice: &[u8]) -> String {
-    hex::encode(Sha256::digest(slice).as_slice())
 }

@@ -1,5 +1,5 @@
 use anyhow::{Result, bail};
-use solana_coverage::util::StripCurrentDir;
+use solana_coverage::util::{StripCurrentDir, find_files_with_extension};
 use std::{
     env::{args, current_dir},
     path::PathBuf,
@@ -38,7 +38,7 @@ Usage: {0} TODO...
         current_dir.join("sbf_trace_dir")
     };
 
-    let regs_paths = solana_coverage::util::files_with_extension(&sbf_trace_dir, "regs")?;
+    let regs_paths = find_files_with_extension(&[sbf_trace_dir.clone()], "regs");
 
     if regs_paths.is_empty() {
         bail!(
