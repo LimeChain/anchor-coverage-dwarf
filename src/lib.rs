@@ -136,8 +136,21 @@ fn build_dwarf(debug_path: &Path, src_paths: &HashSet<PathBuf>) -> Result<Dwarf>
 
     let vaddr_entry_map = build_vaddr_entry_map(loader, debug_path, src_paths)?;
 
-    let so_path = debug_path.with_extension("so");
-    let so_hash = compute_hash(&std::fs::read(&so_path)?);
+    // Suppose debug_path is program.debug, swap with .so and try
+    let mut so_path = debug_path.with_extension("so");
+    let so_content = match std::fs::read(&so_path) {
+        Err(e) => {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                // We might have program.so.debug - simply cut debug and try
+                so_path = debug_path.with_extension("");
+                std::fs::read(&so_path)?
+            } else {
+                return Err(e.into());
+            }
+        }
+        Ok(c) => c,
+    };
+    let so_hash = compute_hash(&so_content);
 
     Ok(Dwarf {
         path: debug_path.to_path_buf(),
