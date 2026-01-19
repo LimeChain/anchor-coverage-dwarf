@@ -2,9 +2,14 @@
 name = "solana-coverage"
 version = "1.0.0"
 authors = ["Boris Astardzhiev <boris.astardzhiev@gmail.com>", "Samuel Moelius <sam@moeli.us>"]
-description = "A tool for computing test coverage of a Solana program"
+description = "A tool for computing test coverage of Solana programs, maintained by LimeChain"
 edition = "2024"
 license = "AGPL-3.0"
+repository = "https://github.com/LimeChain/anchor-coverage-dwarf"
+homepage = "https://limechain.tech"
+readme = "README.md"
+keywords = ["solana", "coverage", "testing"]
+categories = ["development-tools::testing"]
 
 [dependencies]
 addr2line = "0.25"
