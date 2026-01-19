@@ -41,8 +41,8 @@ sudo dnf install lcov
    for collecting the tracing data. In other words it's up to the user to
    generate the register tracing data which can later be ingested with this tool.
 
-   For example in the case of having a few Rust tests for your program using either
-   LiteSVM (or maybe some TS tests) or Mollusk you would typically do:
+   For example in the case of having a few Rust/TS tests for your program using facilities that support register tracing -
+   `LiteSVM` (since `0.9.0`) or `mollusk` (since `0.8.1`) you would typically do:
 
    ```sh
    SBF_TRACE_DIR=$PWD/sbf_trace_dir cargo test -- --nocapture
