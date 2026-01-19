@@ -59,7 +59,7 @@ sudo dnf install lcov
       --sbf-path=$PWD/target/deploy \
       --sbf-trace-dir=$PWD/sbf_trace_dir
    ```
-  
+
    This would work for a program called myapp.
 
 3. Run the following command to generate and open an HTML coverage report:
@@ -94,4 +94,4 @@ The following is an example. The line with the assignment to `signer` is hit onl
   ```
   Line hits: 0
   ```
-  Check that you added `debug = true` to the `[profile.release]` section of your Anchor project's root Cargo.toml.
+  Check that you added `debug = true` to the `[profile.release]` section of your project's root Cargo.toml. Again, it's desirable to turn off optimizations which implies dynamic stack frames at the moment of this writing.
