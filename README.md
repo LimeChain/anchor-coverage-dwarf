@@ -2,6 +2,21 @@
 
 A tool for computing test code coverage of Solana programs.
 
+## Prerequisites
+
+Install `lcov` to generate HTML coverage reports:
+
+```sh
+# macOS
+brew install lcov
+
+# Ubuntu/Debian
+sudo apt install lcov
+
+# Fedora
+sudo dnf install lcov
+```
+
 ## Steps to use
 
 1. Add the following to `[profile.release]` section of your Solana program's Cargo.toml:
@@ -30,22 +45,22 @@ A tool for computing test code coverage of Solana programs.
    LiteSVM (or maybe some TS tests) or Mollusk you would typically do:
 
    ```sh
-   SBF_OUT_DIR=target/deploy SBF_TRACE_DIR=$PWD/sbf_trace_dir cargo test -- --nocapture
+   SBF_TRACE_DIR=$PWD/sbf_trace_dir cargo test -- --nocapture
    ```
 
    After the tests are finished the register tracing data will be dumped into `sbf_trace_dir`
-   and this is the data this tool can ingest and generate code coverage statistics on top of it: 
+   and this is the data this tool can ingest and generate code coverage statistics on top of.
 
    Finally after having executed your tests:
 
    ```sh
-   RUST_BACKTRACE=1 SRC_PATHS=$PWD/src/ SBF_PATHS=$PWD/target/deploy SBF_TRACE_DIR=sbf_trace_dir solana-coverage
+   RUST_BACKTRACE=1 solana-coverage \
+      --src-path=$PWD/programs/myapp/src/ \
+      --sbf-path=$PWD/target/deploy \
+      --sbf-trace-dir=$PWD/sbf_trace_dir
    ```
-
-   Environment variables:
-   * SRC_PATHS - SRC paths that will only be used for generating coverage (split with a `,`)
-   * SBF_PATHS - the SBF fixture paths (split with a `,`)
-   * SBF_TRACE_DIR - the location that contains the register tracing data
+  
+   This would work for a program called myapp.
 
 3. Run the following command to generate and open an HTML coverage report:
 
@@ -55,7 +70,7 @@ A tool for computing test code coverage of Solana programs.
 
 ## Known problems
 
-`solana-coverage` uses Dwarf debug information, not [LLVM instrumentation-based coverage], to map instructions to source code locations. This can have confusing implications. For example:
+`solana-coverage` uses Dwarf debug information, not LLVM instrumentation-based coverage, to map instructions to source code locations. This can have confusing implications. For example:
 
 - one line can appear directly before another
 - the latter line can have a greater number of hits
