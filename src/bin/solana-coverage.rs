@@ -1,74 +1,36 @@
-use anyhow::{Result, bail};
-use solana_coverage::util::{StripCurrentDir, find_files_with_extension};
-use std::{
-    env::{args, current_dir},
-    path::PathBuf,
-};
-
-const SBF_TRACE_DIR: &str = "SBF_TRACE_DIR";
-
-struct Options {
-    #[allow(dead_code)]
-    args: Vec<String>,
-    debug: bool,
-    help: bool,
-}
+use anyhow::Result;
+use clap::Parser;
+use std::{collections::HashSet, path::PathBuf};
 
 fn main() -> Result<()> {
-    let options = parse_args();
+    let options = Args::parse();
 
-    if options.help {
-        println!(
-            "{} {}
+    let sbf_trace_dir = options.sbf_trace_dir;
+    let src_paths: HashSet<_> = options.src_path.into_iter().collect();
+    let sbf_paths = options.sbf_path;
 
-A tool for computing test coverage of Solana programs.
-
-Usage: SRC_PATHS=$PWD/src/[;$PWD/src_path2;...] \
-SBF_PATHS=$PWD/target/deploy[;$PWD/fixtures;...] SBF_TRACE_DIR=sbf_trace_dir {0}",
-            env!("CARGO_PKG_NAME"),
-            env!("CARGO_PKG_VERSION")
-        );
-        return Ok(());
-    }
-
-    let sbf_trace_dir = if let Ok(d) = std::env::var(SBF_TRACE_DIR) {
-        PathBuf::from(d)
-    } else {
-        let current_dir = current_dir()?;
-        current_dir.join("sbf_trace_dir")
-    };
-
-    let regs_paths = find_files_with_extension(std::slice::from_ref(&sbf_trace_dir), "regs");
-
-    if regs_paths.is_empty() {
-        bail!(
-            "Found no regs files in: {}
-Are you sure you run your tests with register tracing enabled",
-            sbf_trace_dir.strip_current_dir().display(),
-        );
-    }
-
-    solana_coverage::run(sbf_trace_dir, options.debug)?;
+    solana_coverage::run(sbf_trace_dir, src_paths, sbf_paths, options.debug)?;
 
     Ok(())
 }
 
-fn parse_args() -> Options {
-    let mut debug = false;
-    let mut help = false;
-    let args = args()
-        .skip(1)
-        .filter_map(|arg| {
-            if arg == "--debug" {
-                debug = true;
-                None
-            } else if arg == "--help" || arg == "-h" {
-                help = true;
-                None
-            } else {
-                Some(arg)
-            }
-        })
-        .collect::<Vec<_>>();
-    Options { args, debug, help }
+/// CLI options
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    /// Enable debug information when parsing
+    #[arg(short, long)]
+    debug: bool,
+
+    /// Source path to the Solana program (can be specified multiple times), please use full path
+    #[arg(long, action = clap::ArgAction::Append, required = true)]
+    src_path: Vec<PathBuf>,
+
+    /// SBF path to where the Solana program's .so and .debug are located (typically target/deploy or target/deploy/debug) (can be specified multiple times), please use full path
+    #[arg(long, action = clap::ArgAction::Append, required = true)]
+    sbf_path: Vec<PathBuf>,
+
+    /// Path to the register tracing dumps, please use full path
+    #[arg(long, required = true)]
+    sbf_trace_dir: PathBuf,
 }

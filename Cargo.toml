@@ -14,3 +14,4 @@ byteorder = "1.5"
 solana-sbpf = "0"
 sha2 = "0.10"
 hex = "0.4"
+clap = { version = "4.5", features = ["derive"] }

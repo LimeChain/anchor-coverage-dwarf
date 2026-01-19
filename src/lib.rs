@@ -1,5 +1,5 @@
 use addr2line::Loader;
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, bail};
 use byteorder::{LittleEndian, ReadBytesExt};
 use std::{
     collections::{BTreeMap, HashSet},
@@ -49,20 +49,24 @@ type VaddrEntryMap<'a> = BTreeMap<u64, Entry<'a>>;
 
 type FileLineCountMap<'a> = BTreeMap<&'a str, BTreeMap<u32, usize>>;
 
-pub fn run(sbf_trace_dir: PathBuf, debug: bool) -> Result<()> {
+pub fn run(
+    sbf_trace_dir: PathBuf,
+    src_paths: HashSet<PathBuf>,
+    sbf_paths: Vec<PathBuf>,
+    debug: bool,
+) -> Result<()> {
     let mut lcov_paths = Vec::new();
 
-    let debug_paths = debug_paths()?;
-    let src_paths = src_paths()?;
+    let debug_paths = debug_paths(sbf_paths)?;
 
     let dwarfs = debug_paths
         .into_iter()
         .map(|path| build_dwarf(&path, &src_paths))
-        .collect::<Result<Vec<_>>>()?;
+        .collect::<Result<Vec<_>>>()
+        .expect("Can't build dwarf");
 
     if dwarfs.is_empty() {
-        eprintln!("Found no debug files");
-        return Ok(());
+        bail!("Found no debug files");
     }
 
     if debug {
@@ -74,6 +78,13 @@ pub fn run(sbf_trace_dir: PathBuf, debug: bool) -> Result<()> {
     }
 
     let regs_paths = find_files_with_extension(std::slice::from_ref(&sbf_trace_dir), "regs");
+    if regs_paths.is_empty() {
+        bail!(
+            "Found no regs files in: {}
+Are you sure you run your tests with register tracing enabled",
+            sbf_trace_dir.strip_current_dir().display(),
+        );
+    }
 
     for regs_path in &regs_paths {
         match process_regs_path(&dwarfs, regs_path, &src_paths) {
@@ -104,19 +115,7 @@ If you are done generating lcov files, try running:
     Ok(())
 }
 
-fn src_paths() -> Result<HashSet<PathBuf>> {
-    let mut src_paths = HashSet::new();
-    for src_path in std::env::var("SRC_PATHS")?.split(",") {
-        src_paths.insert(PathBuf::from(src_path));
-    }
-    Ok(src_paths)
-}
-
-fn debug_paths() -> Result<Vec<PathBuf>> {
-    let sbf_paths = std::env::var("SBF_PATHS")?
-        .split(',')
-        .map(PathBuf::from)
-        .collect::<Vec<_>>();
+fn debug_paths(sbf_paths: Vec<PathBuf>) -> Result<Vec<PathBuf>> {
     let debug_files = find_files_with_extension(&sbf_paths, "debug");
     Ok(debug_files)
 }
