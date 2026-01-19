@@ -181,14 +181,9 @@ pub fn get_branches(
                 }
 
                 let ins = insns[i].to_le_bytes();
-                // eprintln!("{:02x?}", ins);
-
-                let ins_type = ins[0];
-                // let ins_dst = (ins[1] & 0xf) as usize;
-                // let ins_src = ((ins[1] & 0xf0) >> 4) as usize;
+                let ins_opcode = ins[0];
                 let ins_offset = ins[2] as u64 | ((ins[3] as u64) << 8);
-                // let ins_immediate = i32::from_be_bytes(ins[4..].try_into().unwrap()) as i64;
-                if (ins_type & ebpf::BPF_JMP) == ebpf::BPF_JMP {
+                if (ins_opcode & 7) == ebpf::BPF_JMP32 || (ins_opcode & 7) == ebpf::BPF_JMP64 {
                     let _next_pc = vaddr + 8;
                     if debug_enabled() {
                         eprintln!("very next instruction is: {:x}", _next_pc);
@@ -218,39 +213,16 @@ pub fn get_branches(
                         eprintln!("from next regs -> next_pc is: {:x}", next_pc);
                     }
 
-                    match ins_type {
-                        // ebpf::JA
-                        ebpf::JEQ_IMM
-                        | ebpf::JEQ_REG
-                        | ebpf::JGT_IMM
-                        | ebpf::JGT_REG
-                        | ebpf::JGE_IMM
-                        | ebpf::JGE_REG
-                        | ebpf::JLT_IMM
-                        | ebpf::JLT_REG
-                        | ebpf::JLE_IMM
-                        | ebpf::JLE_REG
-                        | ebpf::JSET_IMM
-                        | ebpf::JSET_REG
-                        | ebpf::JNE_IMM
-                        | ebpf::JNE_REG
-                        | ebpf::JSGT_IMM
-                        | ebpf::JSGT_REG
-                        | ebpf::JSGE_IMM
-                        | ebpf::JSGE_REG
-                        | ebpf::JSLT_IMM
-                        | ebpf::JSLT_REG
-                        | ebpf::JSLE_IMM
-                        | ebpf::JSLE_REG
-                        // | ebpf::CALL_REG
-                        // | ebpf::CALL_IMM
-                        // | ebpf::SYSCALL
-                        // | ebpf::RETURN /*| ebpf::EXIT */
-                        => {},
-                        _ => {
-                            continue;
-                        }
-                    };
+                    if ins_opcode == ebpf::BPF_JMP32
+                        || ins_opcode == ebpf::BPF_JMP64
+                        || ins_opcode == ebpf::BPF_JA
+                        || ins_opcode == ebpf::CALL_REG
+                        || ins_opcode == ebpf::CALL_IMM
+                        || ins_opcode == ebpf::EXIT
+                    {
+                        // Skip these.
+                        continue;
+                    }
 
                     // There's a branch at this vaddr.
                     let branch = branches.entry(Vaddr::from(*vaddr)).or_insert({
