@@ -1,4 +1,4 @@
-# solana-coverage
+# sbpf-coverage
 
 A tool for computing test code coverage of Solana programs.
 
@@ -54,7 +54,7 @@ sudo dnf install lcov
    Finally after having executed your tests:
 
    ```sh
-   RUST_BACKTRACE=1 solana-coverage \
+   RUST_BACKTRACE=1 sbpf-coverage \
       --src-path=$PWD/programs/myapp/src/ \
       --sbf-path=$PWD/target/deploy \
       --sbf-trace-dir=$PWD/sbf_trace_dir
@@ -70,7 +70,7 @@ sudo dnf install lcov
 
 ## Known problems
 
-`solana-coverage` uses Dwarf debug information, not LLVM instrumentation-based coverage, to map instructions to source code locations. This can have confusing implications. For example:
+`sbpf-coverage` uses Dwarf debug information, not LLVM instrumentation-based coverage, to map instructions to source code locations. This can have confusing implications. For example:
 
 - one line can appear directly before another
 - the latter line can have a greater number of hits

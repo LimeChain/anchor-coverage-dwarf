@@ -9,7 +9,7 @@ fn main() -> Result<()> {
     let src_paths: HashSet<_> = options.src_path.into_iter().collect();
     let sbf_paths = options.sbf_path;
 
-    solana_coverage::run(sbf_trace_dir, src_paths, sbf_paths, options.debug)?;
+    sbpf_coverage::run(sbf_trace_dir, src_paths, sbf_paths, options.debug)?;
 
     Ok(())
 }
