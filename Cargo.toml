@@ -12,11 +12,11 @@ keywords = ["solana", "coverage", "testing"]
 categories = ["development-tools::testing"]
 
 [dependencies]
-addr2line = "0.25"
+addr2line = "0.26"
 anyhow = "1.0"
 byteorder = "1.5"
 # BPF_ consts
-solana-sbpf = "0"
+solana-sbpf = "0.14.4"
 sha2 = "0.10"
 hex = "0.4"
 clap = { version = "4.5", features = ["derive"] }
