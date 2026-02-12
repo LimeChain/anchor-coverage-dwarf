@@ -1,6 +1,6 @@
 [package]
 name = "sbpf-coverage"
-version = "0.1.9"
+version = "0.1.10"
 authors = ["Boris Astardzhiev <boris.astardzhiev@gmail.com>", "Samuel Moelius <sam@moeli.us>"]
 description = "A tool for computing test coverage of Solana programs, maintained by LimeChain"
 edition = "2024"
