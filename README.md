@@ -35,7 +35,7 @@ sudo dnf install lcov
    cargo build-sbf --debug --tools-version v1.51 --arch v1
    ```
 
-   Note: from platform-tools v1.53 onwards, building with `--debug` outputs the artifacts to `target/deploy/debug` instead of `target/deploy`.
+   Note: from `solana-cargo-build-sbf` 4.0.0 onwards, building with `--debug` outputs the artifacts to `target/deploy/debug` instead of `target/deploy`.
 
 2. Execution:
 
