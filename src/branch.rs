@@ -154,7 +154,8 @@ pub fn get_branches(
 
     let mut branches = Branches::new();
     let mut branches_total_count = 0;
-    for (i, vaddr) in vaddrs.iter().enumerate() {
+    let mut vaddr_iter = vaddrs.iter().enumerate();
+    while let Some((i, vaddr)) = vaddr_iter.next() {
         let mut _indent = 0;
         let frames = dwarf.loader.find_frames(*vaddr);
         if let Ok(frames) = frames {
@@ -182,6 +183,11 @@ pub fn get_branches(
 
                 let ins = insns[i].to_le_bytes();
                 let ins_opcode = ins[0];
+                if ins_opcode == ebpf::LD_DW_IMM {
+                    vaddr_iter.next(); // 16 bytes instruction, hence consume 1 vaddr
+                    continue;
+                }
+
                 let ins_offset = ins[2] as u64 | ((ins[3] as u64) << 8);
                 if (ins_opcode & 7) == ebpf::BPF_JMP32 || (ins_opcode & 7) == ebpf::BPF_JMP64 {
                     let _next_pc = vaddr + 8;
