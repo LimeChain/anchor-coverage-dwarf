@@ -141,7 +141,7 @@ fn debug_paths(sbf_paths: Vec<PathBuf>) -> Result<Vec<PathBuf>> {
             // check it has debug sections
             object
                 .sections()
-                .any(|section| section.name().unwrap().starts_with(".debug_"))
+                .any(|section| section.name().is_ok_and(|n| n.starts_with(".debug_")))
         })
         .collect();
 
@@ -162,12 +162,13 @@ fn build_dwarf(debug_path: &Path, src_paths: &HashSet<PathBuf>) -> Result<Dwarf>
 
     let loader = Box::leak(Box::new(loader));
 
-    let vaddr_entry_map = build_vaddr_entry_map(loader, debug_path, src_paths)?;
-
     eprintln!(
         "Trying to build a DWARF entry with debug path: {}",
         debug_path.strip_current_dir().display()
     );
+
+    let vaddr_entry_map = build_vaddr_entry_map(loader, debug_path, src_paths)?;
+
     // Suppose debug_path is program.debug, swap with .so and try
     let mut so_path = debug_path.with_extension("so");
     let so_content = match std::fs::read(&so_path) {
@@ -206,17 +207,18 @@ fn process_regs_path(
     src_paths: &HashSet<PathBuf>,
 ) -> Result<Outcome> {
     eprintln!();
+    let exec_sha256 = std::fs::read_to_string(regs_path.with_extension("exec.sha256"))?;
     eprintln!(
         "Regs file: {} (expecting executable with SHA-256: {})",
         regs_path.strip_current_dir().display(),
-        &std::fs::read_to_string(regs_path.with_extension("exec.sha256"))?[..16]
+        &exec_sha256[..16]
     );
 
     let (mut vaddrs, regs) = read_vaddrs(regs_path)?;
     eprintln!("Regs read: {}", vaddrs.len());
     let insns = read_insns(&regs_path.with_extension("insns"))?;
 
-    let dwarf = find_applicable_dwarf(dwarfs, regs_path, &mut vaddrs)?;
+    let dwarf = find_applicable_dwarf(dwarfs, regs_path, &exec_sha256, &mut vaddrs)?;
 
     eprintln!(
         "Applicable dwarf: {}",
@@ -331,8 +333,7 @@ fn read_vaddrs(regs_path: &Path) -> Result<(Vaddrs, Regs)> {
         let vaddr = data_trace[11] << 3;
 
         vaddrs.push(vaddr);
-        let regs_values: [u64; 12] = data_trace[0..12].try_into().unwrap();
-        regs.push(regs_values);
+        regs.push(data_trace);
     }
 
     Ok((vaddrs, regs))
@@ -341,10 +342,9 @@ fn read_vaddrs(regs_path: &Path) -> Result<(Vaddrs, Regs)> {
 fn find_applicable_dwarf<'a>(
     dwarfs: &'a [Dwarf],
     regs_path: &Path,
+    exec_sha256: &str,
     vaddrs: &mut [u64],
 ) -> Result<&'a Dwarf> {
-    // Get the SHA-256 identifier for the Executable that has generated this tracing data.
-    let exec_sha256 = std::fs::read_to_string(regs_path.with_extension("exec.sha256"))?;
     let dwarf = dwarfs
         .iter()
         .find(|dwarf| dwarf.so_hash == exec_sha256)
@@ -394,7 +394,7 @@ fn build_file_line_count_map<'a>(
 }
 
 fn write_lcov_file(regs_path: &Path, file_line_count_map: FileLineCountMap<'_>) -> Result<PathBuf> {
-    let lcov_path = Path::new(regs_path).with_extension("lcov");
+    let lcov_path = regs_path.with_extension("lcov");
 
     let mut file = OpenOptions::new()
         .create(true)
