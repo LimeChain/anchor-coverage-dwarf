@@ -358,7 +358,7 @@ fn find_applicable_dwarf<'a>(
         regs_path.strip_current_dir().display(),
         &dwarf.so_hash[..16]
     );
-    let vaddr_first = *vaddrs.first().unwrap();
+    let vaddr_first = *vaddrs.first().ok_or(anyhow!("Vaddrs is empty!"))?;
     assert!(dwarf.start_address >= vaddr_first);
     let shift = dwarf.start_address - vaddr_first;
 
@@ -385,8 +385,12 @@ fn build_file_line_count_map<'a>(
         let Some(entry) = vaddr_entry_map.get(&vaddr) else {
             continue;
         };
-        let line_count_map = file_line_count_map.get_mut(entry.file).unwrap();
-        let count = line_count_map.get_mut(&entry.line).unwrap();
+        let Some(line_count_map) = file_line_count_map.get_mut(entry.file) else {
+            continue;
+        };
+        let Some(count) = line_count_map.get_mut(&entry.line) else {
+            continue;
+        };
         *count += 1;
     }
 
