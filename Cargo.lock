@@ -427,6 +427,7 @@ dependencies = [
  "byteorder",
  "clap",
  "hex",
+ "object",
  "sha2",
  "solana-sbpf",
 ]

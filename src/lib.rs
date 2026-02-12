@@ -1,6 +1,7 @@
 use addr2line::Loader;
 use anyhow::{Result, anyhow, bail};
 use byteorder::{LittleEndian, ReadBytesExt};
+use object::{Object, ObjectSection};
 use std::{
     collections::{BTreeMap, HashSet},
     fs::{File, OpenOptions, metadata},
@@ -66,7 +67,7 @@ pub fn run(
         .expect("Can't build dwarf");
 
     if dwarfs.is_empty() {
-        bail!("Found no debug files");
+        bail!("Found no .so/.debug/.so.debug files containing debug sections.");
     }
 
     if debug {
@@ -92,7 +93,10 @@ Are you sure you run your tests with register tracing enabled",
                 lcov_paths.push(lcov_path.strip_current_dir().to_path_buf());
             }
             _ => {
-                eprintln!("Skipping Regs file: {}", regs_path.to_string_lossy());
+                eprintln!(
+                    "Skipping Regs file: {} (no matching executable)",
+                    regs_path.strip_current_dir().display()
+                );
             }
         }
     }
@@ -116,8 +120,33 @@ If you are done generating lcov files, try running:
 }
 
 fn debug_paths(sbf_paths: Vec<PathBuf>) -> Result<Vec<PathBuf>> {
+    // It's possible that the debug information is in the .so file itself
+    let so_files = find_files_with_extension(&sbf_paths, "so");
+    // It's also possible that it ends with .debug
     let debug_files = find_files_with_extension(&sbf_paths, "debug");
-    Ok(debug_files)
+
+    let mut maybe_list = so_files;
+    maybe_list.extend(debug_files);
+
+    // Collect only those files that contain debug sections
+    let full_list = maybe_list
+        .into_iter()
+        .filter(|maybe_path| {
+            let Ok(data) = std::fs::read(maybe_path) else {
+                return false;
+            };
+            let Ok(object) = object::read::File::parse(&*data) else {
+                return false;
+            };
+            // check it has debug sections
+            object
+                .sections()
+                .any(|section| section.name().unwrap().starts_with(".debug_"))
+        })
+        .collect();
+
+    eprintln!("Files containing debug sections: {:#?}", full_list);
+    Ok(full_list)
 }
 
 fn build_dwarf(debug_path: &Path, src_paths: &HashSet<PathBuf>) -> Result<Dwarf> {
@@ -135,6 +164,10 @@ fn build_dwarf(debug_path: &Path, src_paths: &HashSet<PathBuf>) -> Result<Dwarf>
 
     let vaddr_entry_map = build_vaddr_entry_map(loader, debug_path, src_paths)?;
 
+    eprintln!(
+        "Trying to build a DWARF entry with debug path: {}",
+        debug_path.strip_current_dir().display()
+    );
     // Suppose debug_path is program.debug, swap with .so and try
     let mut so_path = debug_path.with_extension("so");
     let so_content = match std::fs::read(&so_path) {
@@ -150,6 +183,12 @@ fn build_dwarf(debug_path: &Path, src_paths: &HashSet<PathBuf>) -> Result<Dwarf>
         Ok(c) => c,
     };
     let so_hash = compute_hash(&so_content);
+    eprintln!(
+        "Found a match:\n{} to\n{} (SHA-256: {})",
+        debug_path.strip_current_dir().display(),
+        so_path.strip_current_dir().display(),
+        &so_hash[..16],
+    );
 
     Ok(Dwarf {
         path: debug_path.to_path_buf(),
@@ -167,7 +206,11 @@ fn process_regs_path(
     src_paths: &HashSet<PathBuf>,
 ) -> Result<Outcome> {
     eprintln!();
-    eprintln!("Regs file: {}", regs_path.strip_current_dir().display());
+    eprintln!(
+        "Regs file: {} (expecting executable with SHA-256: {})",
+        regs_path.strip_current_dir().display(),
+        &std::fs::read_to_string(regs_path.with_extension("exec.sha256"))?[..16]
+    );
 
     let (mut vaddrs, regs) = read_vaddrs(regs_path)?;
     eprintln!("Regs read: {}", vaddrs.len());
@@ -310,6 +353,11 @@ fn find_applicable_dwarf<'a>(
             exec_sha256
         ))?;
 
+    eprintln!(
+        "Matching Regs file {} to executable with SHA-256: {}",
+        regs_path.strip_current_dir().display(),
+        &dwarf.so_hash[..16]
+    );
     let vaddr_first = *vaddrs.first().unwrap();
     assert!(dwarf.start_address >= vaddr_first);
     let shift = dwarf.start_address - vaddr_first;
