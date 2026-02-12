@@ -12,7 +12,7 @@ keywords = ["solana", "coverage", "testing"]
 categories = ["development-tools::testing"]
 
 [dependencies]
-addr2line = "0.25"
+addr2line = "0.26"
 anyhow = "1.0"
 byteorder = "1.5"
 # BPF_ consts
