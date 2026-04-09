@@ -457,9 +457,9 @@ checksum = "67b1b7a3b5fe4f1376887184045fcf45c69e92af734b7aaddc05fb777b6fbd03"
 
 [[package]]
 name = "solana-sbpf"
-version = "0.14.4"
+version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "733b3657a0fab205102b799dbe17f85d3972cf984232c1b0b108fa6ba438e382"
+checksum = "0ae39fc6751e42572cec386b5691acd516b208ae457dbf59dd2002093b22288c"
 dependencies = [
  "byteorder",
  "combine",
