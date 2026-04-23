@@ -13,7 +13,7 @@ categories = ["development-tools::testing"]
 
 [dependencies]
 addr2line = "0.26"
-object = "0.38"
+object = "0.39"
 anyhow = "=1.0.100"
 byteorder = "=1.5.0"
 # BPF_ consts
