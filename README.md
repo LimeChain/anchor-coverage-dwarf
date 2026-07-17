@@ -62,7 +62,7 @@ sudo dnf install lcov
    ```sh
    RUST_BACKTRACE=1 sbpf-coverage \
       --src-path=$PWD/programs/myapp/src/ \
-      --sbf-path=$PWD/target/deploy \
+      --sbf-path=$PWD/target/deploy/debug \
       --sbf-trace-dir=$PWD/sbf_trace_dir
    ```
 
